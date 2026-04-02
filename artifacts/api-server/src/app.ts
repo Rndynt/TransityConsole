@@ -1,34 +1,35 @@
-import express, { type Express } from "express";
-import cors from "cors";
-import pinoHttp from "pino-http";
-import router from "./routes";
-import { logger } from "./lib/logger";
+import Fastify from "fastify";
+import cors from "@fastify/cors";
+import healthRoutes from "./routes/health.js";
+import operatorsRoutes from "./routes/operators.js";
+import terminalsRoutes from "./routes/terminals.js";
+import bookingsRoutes from "./routes/bookings.js";
+import analyticsRoutes from "./routes/analytics.js";
 
-const app: Express = express();
-
-app.use(
-  pinoHttp({
-    logger,
-    serializers: {
-      req(req) {
-        return {
-          id: req.id,
-          method: req.method,
-          url: req.url?.split("?")[0],
-        };
-      },
-      res(res) {
-        return {
-          statusCode: res.statusCode,
-        };
-      },
+export async function buildApp() {
+  const app = Fastify({
+    logger: {
+      level: process.env.LOG_LEVEL ?? "info",
+      redact: [
+        "req.headers.authorization",
+        "req.headers.cookie",
+        "res.headers['set-cookie']",
+      ],
+      ...(process.env.NODE_ENV !== "production"
+        ? { transport: { target: "pino-pretty", options: { colorize: true } } }
+        : {}),
     },
-  }),
-);
-app.use(cors());
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+  });
 
-app.use("/api", router);
+  await app.register(cors, { origin: true });
 
-export default app;
+  await app.register(async (api) => {
+    await api.register(healthRoutes);
+    await api.register(operatorsRoutes);
+    await api.register(terminalsRoutes);
+    await api.register(bookingsRoutes);
+    await api.register(analyticsRoutes);
+  }, { prefix: "/api" });
+
+  return app;
+}
