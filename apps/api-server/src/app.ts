@@ -1,5 +1,8 @@
 import Fastify from "fastify";
 import cors from "@fastify/cors";
+import fastifyStatic from "@fastify/static";
+import path from "path";
+import { fileURLToPath } from "url";
 import healthRoutes from "./modules/health/health.routes.js";
 import operatorsRoutes from "./modules/operators/operators.routes.js";
 import terminalsRoutes from "./modules/terminals/terminals.routes.js";
@@ -10,6 +13,9 @@ import authRoutes from "./modules/auth/auth.routes.js";
 import { startHealthScheduler, stopHealthScheduler } from "./modules/terminals/terminals.scheduler.js";
 import { ensureDefaultAdmin } from "./modules/auth/auth.service.js";
 
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const isProduction = process.env.NODE_ENV === "production";
+
 export async function buildApp() {
   const app = Fastify({
     logger: {
@@ -19,9 +25,9 @@ export async function buildApp() {
         "req.headers.cookie",
         "res.headers['set-cookie']",
       ],
-      ...(process.env.NODE_ENV !== "production"
-        ? { transport: { target: "pino-pretty", options: { colorize: true } } }
-        : {}),
+      ...(isProduction
+        ? {}
+        : { transport: { target: "pino-pretty", options: { colorize: true } } }),
     },
   });
 
@@ -36,6 +42,21 @@ export async function buildApp() {
     await api.register(analyticsRoutes);
     await api.register(gatewayRoutes);
   }, { prefix: "/api" });
+
+  if (isProduction) {
+    const staticRoot = process.env.STATIC_DIR
+      ?? path.resolve(__dirname, "../../apps/transity-console/dist/public");
+
+    await app.register(fastifyStatic, {
+      root: staticRoot,
+      prefix: "/",
+      wildcard: false,
+    });
+
+    app.setNotFoundHandler((_req, reply) => {
+      reply.sendFile("index.html", staticRoot);
+    });
+  }
 
   app.addHook("onReady", async () => {
     await ensureDefaultAdmin();
