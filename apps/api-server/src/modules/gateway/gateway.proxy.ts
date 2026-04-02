@@ -33,7 +33,6 @@ export interface BookingResult {
   passengerPhone: string;
   seatNumbers: string[];
   totalAmount: number;
-  commissionAmount: number;
   createdAt: string;
 }
 
@@ -50,9 +49,6 @@ export async function createBooking(req: BookingRequest): Promise<BookingResult>
   const operator = operators.find((o) => o.slug === operatorSlug);
 
   if (!operator) throw new GatewayError(`Operator "${operatorSlug}" not found or inactive`, "OPERATOR_NOT_FOUND", 404);
-
-  const commissionPct = parseFloat(String(operator.commissionPct));
-  const commissionAmount = Math.ceil(req.totalAmount * (commissionPct / 100));
 
   let externalBookingId: string | null = null;
 
@@ -92,7 +88,7 @@ export async function createBooking(req: BookingRequest): Promise<BookingResult>
     departureDate: new Date().toISOString().split("T")[0] as string,
     seatNumbers: req.seatNumbers ?? [],
     totalAmount: String(req.totalAmount),
-    commissionAmount: String(commissionAmount),
+    commissionAmount: "0",
     externalBookingId,
     status: externalBookingId ? "confirmed" : "pending",
   });
@@ -108,7 +104,6 @@ export async function createBooking(req: BookingRequest): Promise<BookingResult>
     passengerPhone: booking.passengerPhone,
     seatNumbers: booking.seatNumbers,
     totalAmount: parseFloat(String(booking.totalAmount)),
-    commissionAmount: parseFloat(String(booking.commissionAmount)),
     createdAt: booking.createdAt.toISOString(),
   };
 }
@@ -128,7 +123,6 @@ export async function getBookingById(bookingId: string): Promise<BookingResult |
     passengerPhone: booking.passengerPhone,
     seatNumbers: booking.seatNumbers,
     totalAmount: parseFloat(String(booking.totalAmount)),
-    commissionAmount: parseFloat(String(booking.commissionAmount ?? 0)),
     createdAt: booking.createdAt.toISOString(),
   };
 }

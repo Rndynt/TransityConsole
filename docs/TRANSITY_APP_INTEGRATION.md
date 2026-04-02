@@ -185,9 +185,7 @@ Content-Type: application/json
       "departureTime": "07:00",
       "arrivalTime": "10:30",
       "availableSeats": 8,
-      "priceBeforeMarkup": 100000,
-      "price": 110000,
-      "commissionPct": 10,
+      "price": 100000,
       "currency": "IDR"
     },
     {
@@ -201,9 +199,7 @@ Content-Type: application/json
       "departureTime": "08:00",
       "arrivalTime": "11:30",
       "availableSeats": 12,
-      "priceBeforeMarkup": 95000,
-      "price": 108000,
-      "commissionPct": 13.68,
+      "price": 95000,
       "currency": "IDR"
     }
   ],
@@ -223,9 +219,7 @@ Content-Type: application/json
 | Field | Keterangan |
 |---|---|
 | `tripId` | ID unik trip dalam format `{operatorSlug}:{originalTripId}` — gunakan ini untuk booking |
-| `price` | Harga final yang harus dibayar penumpang (sudah termasuk markup/komisi) |
-| `priceBeforeMarkup` | Harga asli dari terminal sebelum markup |
-| `commissionPct` | Persentase komisi yang diambil TransityConsole |
+| `price` | Harga asli dari terminal operator |
 | `errors` | Terminal yang gagal merespons — trip dari terminal tersebut tidak muncul, tapi tidak error |
 
 **Catatan performa:** Request ini memiliki timeout 5 detik per terminal. Terminal yang tidak merespons dalam 5 detik akan di-skip dan muncul di `errors`.
@@ -255,9 +249,7 @@ X-Api-Key: tc_live_...
   "departureTime": "07:00",
   "arrivalTime": "10:30",
   "availableSeats": 6,
-  "priceBeforeMarkup": 100000,
-  "price": 110000,
-  "commissionPct": 10,
+  "price": 100000,
   "currency": "IDR"
 }
 ```
@@ -309,7 +301,6 @@ Content-Type: application/json
   "passengerPhone": "081234567890",
   "seatNumbers": ["A1", "A2"],
   "totalAmount": 220000,
-  "commissionAmount": 22000,
   "createdAt": "2026-04-10T10:30:00.000Z"
 }
 ```
@@ -321,7 +312,6 @@ Content-Type: application/json
 | `bookingId` | ID booking di TransityConsole — gunakan ini untuk tracking |
 | `externalBookingId` | ID booking di sistem terminal operator (jika terminal merespons) |
 | `status` | `confirmed` jika terminal merespons, `pending` jika terminal down saat booking |
-| `commissionAmount` | Nilai komisi yang diterima TransityConsole |
 
 **Penting tentang status `pending`:**  
 Jika terminal sedang down saat booking dilakukan, booking tetap tersimpan di TransityConsole dengan status `pending`. TransityApp harus:
@@ -354,7 +344,6 @@ X-Api-Key: tc_live_...
   "passengerPhone": "081234567890",
   "seatNumbers": ["A1", "A2"],
   "totalAmount": 220000,
-  "commissionAmount": 22000,
   "createdAt": "2026-04-10T10:30:00.000Z"
 }
 ```
@@ -541,10 +530,7 @@ A: Response tetap `200 OK` dengan `trips: []` dan semua operator di array `error
 A: Pencarian trip: 5 detik. Booking: 8 detik.
 
 **Q: Apakah `price` di search result sudah final?**  
-A: Ya, `price` sudah termasuk markup/komisi dari TransityConsole. Ini adalah harga yang harus ditagihkan ke pengguna.
-
-**Q: Bolehkah TransityApp menampilkan `priceBeforeMarkup`?**  
-A: Tidak disarankan. Harga asli terminal bersifat internal dan tidak dimaksudkan untuk ditampilkan ke pengguna akhir.
+A: Ya, `price` adalah harga asli dari terminal operator. Tampilkan langsung ke pengguna.
 
 **Q: Bagaimana mendapatkan API key?**  
 A: Login ke dashboard TransityConsole sebagai admin, buka halaman Settings → API Keys, lalu klik "Generate API Key". Atau hubungi admin Transity.

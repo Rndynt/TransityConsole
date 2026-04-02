@@ -22,9 +22,7 @@ export interface TerminalTrip {
   departureTime: string;
   arrivalTime: string;
   availableSeats: number;
-  priceBeforeMarkup: number;
   price: number;
-  commissionPct: number;
   currency: string;
 }
 
@@ -53,28 +51,21 @@ async function fetchTripsFromTerminal(operator: OperatorRow, params: TripSearchP
 
   const data = (await res.json()) as { trips?: unknown[] } | unknown[];
   const trips = Array.isArray(data) ? data : ((data as { trips?: unknown[] }).trips ?? []);
-  const commissionPct = parseFloat(String(operator.commissionPct));
 
-  return (trips as Array<Record<string, unknown>>).map((t) => {
-    const basePrice = Number(t["price"] ?? t["basePrice"] ?? 0);
-    const finalPrice = Math.ceil(basePrice * (1 + commissionPct / 100));
-    return {
-      tripId: `${operator.slug}:${String(t["id"] ?? t["tripId"] ?? "")}`,
-      operatorId: operator.id,
-      operatorName: operator.name,
-      operatorSlug: operator.slug,
-      origin: String(t["origin"] ?? params.origin),
-      destination: String(t["destination"] ?? params.destination),
-      departureDate: String(t["departureDate"] ?? params.date),
-      departureTime: String(t["departureTime"] ?? t["departure_time"] ?? ""),
-      arrivalTime: String(t["arrivalTime"] ?? t["arrival_time"] ?? ""),
-      availableSeats: Number(t["availableSeats"] ?? t["available_seats"] ?? 0),
-      priceBeforeMarkup: basePrice,
-      price: finalPrice,
-      commissionPct,
-      currency: String(t["currency"] ?? "IDR"),
-    };
-  });
+  return (trips as Array<Record<string, unknown>>).map((t) => ({
+    tripId: `${operator.slug}:${String(t["id"] ?? t["tripId"] ?? "")}`,
+    operatorId: operator.id,
+    operatorName: operator.name,
+    operatorSlug: operator.slug,
+    origin: String(t["origin"] ?? params.origin),
+    destination: String(t["destination"] ?? params.destination),
+    departureDate: String(t["departureDate"] ?? params.date),
+    departureTime: String(t["departureTime"] ?? t["departure_time"] ?? ""),
+    arrivalTime: String(t["arrivalTime"] ?? t["arrival_time"] ?? ""),
+    availableSeats: Number(t["availableSeats"] ?? t["available_seats"] ?? 0),
+    price: Number(t["price"] ?? t["basePrice"] ?? 0),
+    currency: String(t["currency"] ?? "IDR"),
+  }));
 }
 
 export async function searchTrips(params: TripSearchParams): Promise<SearchResult> {
@@ -122,8 +113,6 @@ export async function getTripById(tripId: string): Promise<Record<string, unknow
   if (!res.ok) return null;
 
   const trip = (await res.json()) as Record<string, unknown>;
-  const commissionPct = parseFloat(String(operator.commissionPct));
-  const basePrice = Number(trip["price"] ?? trip["basePrice"] ?? 0);
 
   return {
     ...trip,
@@ -131,9 +120,7 @@ export async function getTripById(tripId: string): Promise<Record<string, unknow
     operatorId: operator.id,
     operatorName: operator.name,
     operatorSlug: operator.slug,
-    priceBeforeMarkup: basePrice,
-    price: Math.ceil(basePrice * (1 + commissionPct / 100)),
-    commissionPct,
+    price: Number(trip["price"] ?? trip["basePrice"] ?? 0),
   };
 }
 

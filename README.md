@@ -77,9 +77,8 @@ TransityConsole adalah inti operasional ekosistem Transity — sebuah sistem man
 | **Terminal Health Monitor** | Ping otomatis setiap 60 detik, dashboard status real-time |
 | **Trip Search Gateway** | Fan-out ke semua terminal aktif, merge + sort hasil |
 | **Booking Routing** | Forward booking ke terminal yang tepat berdasarkan tripId prefix |
-| **Komisi Otomatis** | Markup per operator dikonfigurasi di Console, dihitung saat search |
 | **Booking Tracker** | Semua booking lintas operator tersimpan di satu database |
-| **Analytics Dashboard** | Revenue, komisi, booking count, uptime per operator |
+| **Analytics Dashboard** | Revenue, booking count, uptime per operator |
 | **API Key Management** | Generate/revoke API key untuk akses gateway |
 | **Admin Auth** | JWT-based login untuk akses dashboard |
 | **Auto Migrasi DB** | Schema otomatis di-apply saat server start (production & dev) |

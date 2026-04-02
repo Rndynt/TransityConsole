@@ -231,10 +231,10 @@ Format array langsung (juga diterima):
 | `departureTime` | `string` | ✅ | Format `HH:MM` |
 | `arrivalTime` | `string` | ✅ | Format `HH:MM` |
 | `availableSeats` | `number` | ✅ | Kursi tersedia |
-| `price` | `number` | ✅ | Harga dasar dalam IDR (Console akan menambah markup) |
+| `price` | `number` | ✅ | Harga dalam IDR yang berlaku di terminal |
 | `currency` | `string` | — | Default `IDR` |
 
-> **Catatan harga:** Kirimkan harga **sebelum** markup. Console akan menambahkan markup/komisi secara otomatis berdasarkan konfigurasi operator sebelum menampilkan ke pengguna TransityApp.
+> **Catatan harga:** Kirimkan harga asli yang berlaku di sistem terminal. Console akan meneruskan harga ini langsung ke TransityApp tanpa perubahan.
 
 Jika tidak ada trip yang tersedia, kembalikan array kosong:
 ```json
