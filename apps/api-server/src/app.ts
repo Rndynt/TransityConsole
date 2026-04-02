@@ -6,6 +6,9 @@ import terminalsRoutes from "./modules/terminals/terminals.routes.js";
 import bookingsRoutes from "./modules/bookings/bookings.routes.js";
 import analyticsRoutes from "./modules/analytics/analytics.routes.js";
 import gatewayRoutes from "./modules/gateway/gateway.routes.js";
+import authRoutes from "./modules/auth/auth.routes.js";
+import { startHealthScheduler, stopHealthScheduler } from "./modules/terminals/terminals.scheduler.js";
+import { ensureDefaultAdmin } from "./modules/auth/auth.service.js";
 
 export async function buildApp() {
   const app = Fastify({
@@ -26,12 +29,22 @@ export async function buildApp() {
 
   await app.register(async (api) => {
     await api.register(healthRoutes);
+    await api.register(authRoutes);
     await api.register(operatorsRoutes);
     await api.register(terminalsRoutes);
     await api.register(bookingsRoutes);
     await api.register(analyticsRoutes);
     await api.register(gatewayRoutes);
   }, { prefix: "/api" });
+
+  app.addHook("onReady", async () => {
+    await ensureDefaultAdmin();
+    startHealthScheduler();
+  });
+
+  app.addHook("onClose", async () => {
+    stopHealthScheduler();
+  });
 
   return app;
 }

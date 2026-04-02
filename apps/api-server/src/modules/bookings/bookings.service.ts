@@ -13,6 +13,8 @@ export function formatBooking(b: repo.Booking) {
     departureDate: b.departureDate,
     seatNumbers: b.seatNumbers,
     totalAmount: parseFloat(String(b.totalAmount)),
+    commissionAmount: parseFloat(String(b.commissionAmount ?? 0)),
+    externalBookingId: b.externalBookingId ?? null,
     status: b.status,
     createdAt: b.createdAt.toISOString(),
   };

@@ -9,9 +9,11 @@ import {
   Moon,
   Sun,
   X,
+  LogOut,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useTheme } from "@/components/theme-provider";
+import { useAuth } from "@/lib/auth";
 
 const NAV_ITEMS = [
   { href: "/", label: "Dashboard", icon: LayoutDashboard },
@@ -28,6 +30,7 @@ interface SidebarNavProps {
 export function SidebarNav({ onClose }: SidebarNavProps) {
   const [location] = useLocation();
   const { theme, setTheme } = useTheme();
+  const { user, logout } = useAuth();
 
   return (
     <div className="flex flex-col h-full bg-sidebar text-sidebar-foreground">
@@ -86,6 +89,12 @@ export function SidebarNav({ onClose }: SidebarNavProps) {
 
       {/* Footer */}
       <div className="px-3 pb-4 pt-3 border-t border-sidebar-border space-y-1">
+        {user && (
+          <div className="px-3 py-1.5 mb-1">
+            <p className="text-[11px] font-medium text-sidebar-foreground/70 truncate">{user.email}</p>
+            <p className="text-[10px] text-sidebar-foreground/35 capitalize">{user.role.replace("_", " ")}</p>
+          </div>
+        )}
         <button
           onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
           className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-[13px] font-medium text-sidebar-foreground/50 hover:bg-sidebar-accent/40 hover:text-sidebar-foreground transition-all"
@@ -93,7 +102,14 @@ export function SidebarNav({ onClose }: SidebarNavProps) {
           {theme === "dark" ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
           {theme === "dark" ? "Light Mode" : "Dark Mode"}
         </button>
-        <div className="px-3 py-2">
+        <button
+          onClick={() => { logout(); onClose?.(); }}
+          className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-[13px] font-medium text-sidebar-foreground/50 hover:bg-red-500/10 hover:text-red-400 transition-all"
+        >
+          <LogOut className="h-4 w-4" />
+          Logout
+        </button>
+        <div className="px-3 py-1">
           <p className="text-[10px] text-sidebar-foreground/25">TransityConsole v0.1</p>
         </div>
       </div>

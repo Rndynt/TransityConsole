@@ -14,6 +14,8 @@ export const bookingsTable = pgTable("bookings", {
   departureDate: date("departure_date").notNull(),
   seatNumbers: text("seat_numbers").array().notNull().default([]),
   totalAmount: numeric("total_amount", { precision: 12, scale: 2 }).notNull().default("0"),
+  commissionAmount: numeric("commission_amount", { precision: 12, scale: 2 }).notNull().default("0"),
+  externalBookingId: text("external_booking_id"),
   status: text("status").notNull().default("pending"), // pending | confirmed | cancelled | completed
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });

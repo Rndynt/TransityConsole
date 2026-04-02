@@ -34,3 +34,27 @@ export async function findAll(
 
   return { rows, total: Number(countRows[0]?.count ?? 0) };
 }
+
+export async function findById(id: string): Promise<Booking | null> {
+  const [row] = await db.select().from(bookingsTable).where(eq(bookingsTable.id, id));
+  return row ?? null;
+}
+
+export async function create(data: {
+  operatorId: string;
+  operatorName: string;
+  passengerName: string;
+  passengerPhone: string;
+  tripId: string;
+  origin: string;
+  destination: string;
+  departureDate: string;
+  seatNumbers: string[];
+  totalAmount: string;
+  commissionAmount: string;
+  externalBookingId: string | null;
+  status: string;
+}): Promise<Booking> {
+  const [row] = await db.insert(bookingsTable).values(data).returning();
+  return row;
+}

@@ -27,6 +27,7 @@ export async function getSummary() {
     totalBookings: Number(bookingStats?.total ?? 0),
     bookingsToday: Number(bookingToday?.count ?? 0),
     totalRevenue: parseFloat(String(bookingStats?.totalRevenue ?? 0)),
+    totalCommission: parseFloat(String((bookingStats as { totalCommission?: number } | undefined)?.totalCommission ?? 0)),
     revenueToday: parseFloat(String(bookingToday?.revenue ?? 0)),
     avgLatencyMs: latencyCount > 0 ? totalLatency / latencyCount : null,
   };
@@ -46,7 +47,7 @@ export async function getOperatorBreakdown(period: "7d" | "30d" | "90d") {
       ? (allHealth.filter(h => h.status === "online").length / allHealth.length) * 100
       : 0;
     const revenue = parseFloat(String(stats?.revenue ?? 0));
-    const commissionEarned = revenue * (parseFloat(String(op.commissionPct)) / 100);
+    const commissionEarned = parseFloat(String((stats as { commission?: number } | undefined)?.commission ?? 0));
 
     return {
       operatorId: op.id,

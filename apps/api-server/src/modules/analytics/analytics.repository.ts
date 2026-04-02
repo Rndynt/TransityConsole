@@ -10,6 +10,7 @@ export async function getGlobalSummaryStats(todayStr: string) {
     db.select({
       total: sql<number>`count(*)`,
       totalRevenue: sql<number>`coalesce(sum(total_amount::numeric), 0)`,
+      totalCommission: sql<number>`coalesce(sum(commission_amount::numeric), 0)`,
     }).from(bookingsTable),
     db.select({
       count: sql<number>`count(*)`,
@@ -38,6 +39,7 @@ export async function getOperatorBookingStats(operatorId: string, sinceStr: stri
     db.select({
       count: sql<number>`count(*)`,
       revenue: sql<number>`coalesce(sum(total_amount::numeric), 0)`,
+      commission: sql<number>`coalesce(sum(commission_amount::numeric), 0)`,
     }).from(bookingsTable).where(
       and(eq(bookingsTable.operatorId, operatorId), gte(bookingsTable.departureDate, sinceStr))
     ),
