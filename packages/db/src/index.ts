@@ -1,4 +1,5 @@
 import { drizzle } from "drizzle-orm/node-postgres";
+import { migrate } from "drizzle-orm/node-postgres/migrator";
 import pg from "pg";
 import * as schema from "./schema";
 
@@ -12,5 +13,10 @@ if (!process.env.DATABASE_URL) {
 
 export const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 export const db = drizzle(pool, { schema });
+
+export async function runMigrations(migrationsFolder: string): Promise<void> {
+  const migrationDb = drizzle(pool);
+  await migrate(migrationDb, { migrationsFolder });
+}
 
 export * from "./schema";

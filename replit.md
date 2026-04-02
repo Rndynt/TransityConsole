@@ -10,42 +10,43 @@ pnpm workspace monorepo using TypeScript. Each package manages its own dependenc
 - **Node.js version**: 24
 - **Package manager**: pnpm
 - **TypeScript version**: 5.9
-- **API framework**: Express 5
-- **Database**: PostgreSQL + Drizzle ORM
-- **Validation**: Zod (`zod/v4`), `drizzle-zod`
+- **API framework**: Fastify 5
+- **Database**: PostgreSQL 16 + Drizzle ORM
+- **Validation**: Zod, drizzle-zod
 - **API codegen**: Orval (from OpenAPI spec)
-- **Build**: esbuild (CJS bundle)
+- **Build**: esbuild (ESM bundle)
 
 ## Project: TransityConsole
 
-Internal admin dashboard OTA (Online Travel Agency) for the Transity ecosystem. Manages shuttle operator registries, aggregates terminal health monitoring, tracks bookings across operators, and shows revenue/commission analytics.
+Internal admin dashboard for the Transity ecosystem (Indonesian shuttle industry). Manages shuttle operator registries, aggregates terminal health monitoring, tracks bookings across operators, and shows revenue/commission analytics. Also serves as a BFF (Backend-for-Frontend) gateway that fans out trip search requests to multiple operator terminals.
 
 **Visual style**: Teal forest green primary (`hsl(170 75% 18%)`), amber accent (`hsl(16 80% 58%)`), DM Sans + Outfit fonts, dark sidebar.
 
-**Pages**: Dashboard, Operators (list/new/edit), Terminal Health, Bookings, Analytics (with charts).
+**Pages**: Dashboard, Operators (list/new/edit), Terminal Health, Bookings, Analytics (with charts), Login.
 
-**Backend routes**: `/api/operators` (CRUD + ping), `/api/terminals/health`, `/api/bookings`, `/api/analytics/*`
+**Backend routes**: `/api/operators` (CRUD + ping), `/api/terminals/health`, `/api/bookings`, `/api/analytics/*`, `/api/auth/*`, `/api/gateway/*`
 
-**Database tables**: `operators`, `terminal_health`, `bookings`
+**Database tables**: `operators`, `terminal_health`, `bookings`, `admin_users`, `api_keys`
 
 ## Structure
 
 ```text
-artifacts-monorepo/
-├── artifacts/              # Deployable applications
-│   ├── api-server/         # Express API server
-│   └── transity-console/   # React + Vite admin dashboard
-├── lib/                    # Shared libraries
+/
+├── apps/
+│   ├── api-server/         # Fastify 5 API server (port 8080)
+│   └── transity-console/   # React + Vite admin dashboard (port 3000)
+├── packages/
 │   ├── api-spec/           # OpenAPI spec + Orval codegen config
 │   ├── api-client-react/   # Generated React Query hooks
 │   ├── api-zod/            # Generated Zod schemas from OpenAPI
-│   └── db/                 # Drizzle ORM schema + DB connection
-├── scripts/                # Utility scripts (single workspace package)
-│   └── src/                # Individual .ts scripts, run via `pnpm --filter @workspace/scripts run <script>`
-├── pnpm-workspace.yaml     # pnpm workspace (artifacts/*, lib/*, lib/integrations/*, scripts)
-├── tsconfig.base.json      # Shared TS options (composite, bundler resolution, es2022)
-├── tsconfig.json           # Root TS project references
-└── package.json            # Root package with hoisted devDeps
+│   └── db/                 # Drizzle ORM schema + DB connection + migrations
+├── scripts/                # Utility scripts
+├── Dockerfile              # Multi-stage production build
+├── docker-compose.yml      # VPS deployment (postgres + app)
+├── .env.example            # Environment variable template
+├── pnpm-workspace.yaml     # pnpm workspace config
+├── tsconfig.base.json      # Shared TS options
+└── tsconfig.json           # Root TS project references
 ```
 
 ## TypeScript & Composite Projects
@@ -63,47 +64,91 @@ Every package extends `tsconfig.base.json` which sets `composite: true`. The roo
 
 ## Packages
 
-### `artifacts/api-server` (`@workspace/api-server`)
+### `apps/api-server` (`@workspace/api-server`)
 
-Express 5 API server. Routes live in `src/routes/` and use `@workspace/api-zod` for request and response validation and `@workspace/db` for persistence.
+Fastify 5 API server. Logic is organized into domain modules in `src/modules/`:
+`analytics/`, `auth/`, `bookings/`, `gateway/`, `health/`, `operators/`, `terminals/`
 
-- Entry: `src/index.ts` — reads `PORT`, starts Express
-- App setup: `src/app.ts` — mounts CORS, JSON/urlencoded parsing, routes at `/api`
-- Routes: `src/routes/index.ts` mounts sub-routers; `src/routes/health.ts` exposes `GET /health` (full path: `/api/health`)
+Each module follows Repository/Service/Routes pattern.
+
+- Entry: `src/index.ts` — reads `PORT`, starts Fastify
+- App setup: `src/app.ts` — registers routes, runs DB migrations on startup, serves static frontend in production
 - Depends on: `@workspace/db`, `@workspace/api-zod`
-- `pnpm --filter @workspace/api-server run dev` — run the dev server
-- `pnpm --filter @workspace/api-server run build` — production esbuild bundle (`dist/index.cjs`)
-- Build bundles an allowlist of deps (express, cors, pg, drizzle-orm, zod, etc.) and externalizes the rest
+- `pnpm --filter @workspace/api-server run build` — esbuild bundle to `dist/index.mjs`
+- `pnpm --filter @workspace/api-server run start` — runs `dist/index.mjs`
 
-### `lib/db` (`@workspace/db`)
+### `packages/db` (`@workspace/db`)
 
-Database layer using Drizzle ORM with PostgreSQL. Exports a Drizzle client instance and schema models.
+Database layer using Drizzle ORM with PostgreSQL.
 
-- `src/index.ts` — creates a `Pool` + Drizzle instance, exports schema
-- `src/schema/index.ts` — barrel re-export of all models
-- `src/schema/<modelname>.ts` — table definitions with `drizzle-zod` insert schemas (no models definitions exist right now)
-- `drizzle.config.ts` — Drizzle Kit config (requires `DATABASE_URL`, automatically provided by Replit)
-- Exports: `.` (pool, db, schema), `./schema` (schema only)
+- `src/index.ts` — creates Pool + Drizzle instance, exports `db`, `pool`, `runMigrations(dir)`
+- `src/schema/` — table definitions (operators, terminal_health, bookings, admin_users, api_keys)
+- `migrations/` — SQL migration files generated by drizzle-kit
+- `drizzle.config.ts` — Drizzle Kit config, outputs migrations to `./migrations/`
+- Exports: `.` (pool, db, schema, runMigrations), `./schema` (schema only)
 
-Production migrations are handled by Replit when publishing. In development, we just use `pnpm --filter @workspace/db run push`, and we fallback to `pnpm --filter @workspace/db run push-force`.
+### Database Migrations
 
-### `lib/api-spec` (`@workspace/api-spec`)
+**Development**: Use `drizzle-kit push` (idempotent, no migration files needed):
+```bash
+pnpm --filter @workspace/db run push
+```
 
-Owns the OpenAPI 3.1 spec (`openapi.yaml`) and the Orval config (`orval.config.ts`). Running codegen produces output into two sibling packages:
+**When schema changes** (to keep production migrations in sync):
+```bash
+pnpm --filter @workspace/db run generate   # creates new SQL migration file
+pnpm --filter @workspace/db run push       # applies to dev DB
+```
 
-1. `lib/api-client-react/src/generated/` — React Query hooks + fetch client
-2. `lib/api-zod/src/generated/` — Zod schemas
+**Production (Docker)**: The API server automatically runs `runMigrations()` on startup via drizzle's `migrate()` function, reading SQL files from `MIGRATIONS_DIR` (default: `/app/packages/db/migrations`). This is idempotent — already-applied migrations are skipped via the `drizzle.__drizzle_migrations` tracking table.
+
+**Dev DB note**: If tables were previously created via `push` (before migration files existed), you need to mark migration 0000 as applied:
+```bash
+psql "$DATABASE_URL" -c "
+  CREATE SCHEMA IF NOT EXISTS drizzle;
+  CREATE TABLE IF NOT EXISTS drizzle.__drizzle_migrations (id SERIAL PRIMARY KEY, hash text NOT NULL, created_at bigint);
+  INSERT INTO drizzle.__drizzle_migrations (hash, created_at) VALUES ('<hash-of-0000.sql>', <journal-when>);
+"
+```
+
+### `packages/api-spec` (`@workspace/api-spec`)
+
+Owns the OpenAPI 3.1 spec (`openapi.yaml`) and Orval config (`orval.config.ts`). Running codegen produces output into:
+
+1. `packages/api-client-react/src/generated/` — React Query hooks + fetch client
+2. `packages/api-zod/src/generated/` — Zod schemas
 
 Run codegen: `pnpm --filter @workspace/api-spec run codegen`
 
-### `lib/api-zod` (`@workspace/api-zod`)
+### `packages/api-zod` (`@workspace/api-zod`)
 
-Generated Zod schemas from the OpenAPI spec (e.g. `HealthCheckResponse`). Used by `api-server` for response validation.
+Generated Zod schemas from the OpenAPI spec. Used by `api-server` for response validation.
 
-### `lib/api-client-react` (`@workspace/api-client-react`)
+### `packages/api-client-react` (`@workspace/api-client-react`)
 
-Generated React Query hooks and fetch client from the OpenAPI spec (e.g. `useHealthCheck`, `healthCheck`).
+Generated React Query hooks and fetch client from the OpenAPI spec. Used by the frontend dashboard.
 
 ### `scripts` (`@workspace/scripts`)
 
-Utility scripts package. Each script is a `.ts` file in `src/` with a corresponding npm script in `package.json`. Run scripts via `pnpm --filter @workspace/scripts run <script>`. Scripts can import any workspace package (e.g., `@workspace/db`) by adding it as a dependency in `scripts/package.json`.
+Utility scripts package. Each script is a `.ts` file in `src/` with a corresponding npm script in `package.json`. Run scripts via `pnpm --filter @workspace/scripts run <script>`.
+
+## Docker / VPS Deployment
+
+The project ships with Docker files for self-hosted VPS deployment:
+
+- `Dockerfile` — multi-stage build: installs deps, builds frontend, builds API, assembles lean production image
+- `docker-compose.yml` — orchestrates postgres + app services
+- `.env.example` — template for required environment variables
+
+**Deploy to VPS:**
+```bash
+cp .env.example .env
+# Edit .env with your secrets
+docker compose up -d
+```
+
+The production container:
+- Serves the React frontend as static files via `@fastify/static`
+- Proxies all `/api/*` requests through Fastify
+- Auto-runs DB migrations on startup
+- Health check at `GET /api/healthz`

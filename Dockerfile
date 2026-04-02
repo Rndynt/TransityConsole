@@ -3,7 +3,7 @@ RUN corepack enable && corepack prepare pnpm@10 --activate
 WORKDIR /app
 
 FROM base AS installer
-COPY package.json pnpm-workspace.yaml pnpm-lock.yaml ./
+COPY package.json pnpm-workspace.yaml pnpm-lock.yaml .npmrc ./
 COPY apps/api-server/package.json ./apps/api-server/
 COPY apps/transity-console/package.json ./apps/transity-console/
 COPY packages/api-client-react/package.json ./packages/api-client-react/
@@ -27,7 +27,7 @@ RUN pnpm --filter @workspace/api-server run build
 FROM base AS production
 WORKDIR /app
 
-COPY package.json pnpm-workspace.yaml pnpm-lock.yaml ./
+COPY package.json pnpm-workspace.yaml pnpm-lock.yaml .npmrc ./
 COPY apps/api-server/package.json ./apps/api-server/
 COPY packages/api-client-react/package.json ./packages/api-client-react/
 COPY packages/api-spec/package.json ./packages/api-spec/
@@ -38,10 +38,12 @@ RUN pnpm install --frozen-lockfile --prod
 
 COPY --from=api-builder /app/apps/api-server/dist ./apps/api-server/dist
 COPY --from=frontend-builder /app/apps/transity-console/dist/public ./apps/transity-console/dist/public
+COPY packages/db/migrations ./packages/db/migrations
 
 ENV NODE_ENV=production
 ENV PORT=8080
 ENV STATIC_DIR=/app/apps/transity-console/dist/public
+ENV MIGRATIONS_DIR=/app/packages/db/migrations
 
 EXPOSE 8080
 

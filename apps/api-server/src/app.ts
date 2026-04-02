@@ -12,9 +12,17 @@ import gatewayRoutes from "./modules/gateway/gateway.routes.js";
 import authRoutes from "./modules/auth/auth.routes.js";
 import { startHealthScheduler, stopHealthScheduler } from "./modules/terminals/terminals.scheduler.js";
 import { ensureDefaultAdmin } from "./modules/auth/auth.service.js";
+import { runMigrations } from "@workspace/db";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const isProduction = process.env.NODE_ENV === "production";
+
+function getMigrationsDir(): string {
+  if (process.env.MIGRATIONS_DIR) {
+    return process.env.MIGRATIONS_DIR;
+  }
+  return path.resolve(__dirname, "../../../packages/db/migrations");
+}
 
 export async function buildApp() {
   const app = Fastify({
@@ -30,6 +38,11 @@ export async function buildApp() {
         : { transport: { target: "pino-pretty", options: { colorize: true } } }),
     },
   });
+
+  const migrationsDir = getMigrationsDir();
+  app.log.info({ migrationsDir }, "Running database migrations...");
+  await runMigrations(migrationsDir);
+  app.log.info("Database migrations complete.");
 
   await app.register(cors, { origin: true });
 
