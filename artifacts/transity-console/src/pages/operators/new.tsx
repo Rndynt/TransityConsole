@@ -21,10 +21,10 @@ import { Link } from "wouter";
 import { useToast } from "@/hooks/use-toast";
 
 const schema = z.object({
-  name: z.string().min(2, "Name must be at least 2 characters"),
-  slug: z.string().min(2, "Slug required").regex(/^[a-z0-9-]+$/, "Slug: lowercase letters, numbers, hyphens only"),
-  apiUrl: z.string().url("Must be a valid URL"),
-  serviceKey: z.string().min(8, "Service key must be at least 8 characters"),
+  name: z.string().min(2, "Minimal 2 karakter"),
+  slug: z.string().min(2, "Slug wajib diisi").regex(/^[a-z0-9-]+$/, "Huruf kecil, angka, dan tanda hubung saja"),
+  apiUrl: z.string().url("Harus berupa URL yang valid"),
+  serviceKey: z.string().min(8, "Minimal 8 karakter"),
   commissionPct: z.coerce.number().min(0).max(100).default(0),
   primaryColor: z.string().optional(),
   logoUrl: z.string().url().optional().or(z.literal("")),
@@ -54,11 +54,11 @@ export default function OperatorNew() {
     mutation: {
       onSuccess: (op) => {
         queryClient.invalidateQueries({ queryKey: getListOperatorsQueryKey() });
-        toast({ title: "Operator registered", description: `${op.name} has been added to the registry.` });
+        toast({ title: "Operator berhasil didaftarkan", description: `${op.name} telah ditambahkan ke registry.` });
         setLocation("/operators");
       },
       onError: () => {
-        toast({ title: "Error", description: "Failed to register operator.", variant: "destructive" });
+        toast({ title: "Error", description: "Gagal mendaftarkan operator.", variant: "destructive" });
       },
     },
   });
@@ -78,38 +78,39 @@ export default function OperatorNew() {
   }
 
   return (
-    <div className="max-w-2xl mx-auto space-y-6">
+    <div className="max-w-xl mx-auto space-y-5 anim-slide-up">
+      {/* Back header */}
       <div className="flex items-center gap-3">
         <Link href="/operators">
-          <Button variant="ghost" size="icon" className="h-8 w-8">
+          <button className="w-9 h-9 rounded-xl flex items-center justify-center text-muted-foreground hover:bg-muted transition-colors">
             <ArrowLeft className="h-4 w-4" />
-          </Button>
+          </button>
         </Link>
         <div>
-          <h1 className="text-3xl font-display font-bold tracking-tight">Register Operator</h1>
-          <p className="text-muted-foreground mt-1">Add a new shuttle operator to the registry.</p>
+          <h1 className="text-xl sm:text-2xl font-display font-bold tracking-tight">Register Operator</h1>
+          <p className="text-muted-foreground text-xs sm:text-sm mt-0.5">Tambah operator shuttle ke registry.</p>
         </div>
       </div>
 
-      <Card>
-        <CardHeader>
-          <CardTitle className="font-display">Operator Details</CardTitle>
-          <CardDescription>Fill in the operator and terminal connection information.</CardDescription>
+      <Card className="rounded-2xl border-border shadow-sm">
+        <CardHeader className="pb-0">
+          <CardTitle className="font-display text-base">Detail Operator</CardTitle>
+          <CardDescription className="text-xs">Isi informasi operator dan koneksi terminal.</CardDescription>
         </CardHeader>
-        <CardContent>
+        <CardContent className="p-5">
           <Form {...form}>
-            <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-5">
-              <div className="grid grid-cols-2 gap-4">
+            <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <FormField
                   control={form.control}
                   name="name"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>Operator Name</FormLabel>
+                      <FormLabel className="text-xs font-semibold">Nama Operator</FormLabel>
                       <FormControl>
-                        <Input {...field} placeholder="Nusa Shuttle" data-testid="input-operator-name" />
+                        <Input {...field} placeholder="Nusa Shuttle" className="rounded-xl h-10" data-testid="input-operator-name" />
                       </FormControl>
-                      <FormMessage />
+                      <FormMessage className="text-xs" />
                     </FormItem>
                   )}
                 />
@@ -118,12 +119,12 @@ export default function OperatorNew() {
                   name="slug"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>Slug</FormLabel>
+                      <FormLabel className="text-xs font-semibold">Slug</FormLabel>
                       <FormControl>
-                        <Input {...field} placeholder="nusa-shuttle" data-testid="input-operator-slug" />
+                        <Input {...field} placeholder="nusa-shuttle" className="rounded-xl h-10" data-testid="input-operator-slug" />
                       </FormControl>
-                      <FormDescription>Unique identifier (lowercase, no spaces)</FormDescription>
-                      <FormMessage />
+                      <FormDescription className="text-[10px]">Unik, huruf kecil, tanpa spasi</FormDescription>
+                      <FormMessage className="text-xs" />
                     </FormItem>
                   )}
                 />
@@ -134,12 +135,12 @@ export default function OperatorNew() {
                 name="apiUrl"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Terminal API URL</FormLabel>
+                    <FormLabel className="text-xs font-semibold">Terminal API URL</FormLabel>
                     <FormControl>
-                      <Input {...field} placeholder="https://nusa-terminal.transity.web.id" data-testid="input-api-url" />
+                      <Input {...field} placeholder="https://nusa-terminal.transity.web.id" className="rounded-xl h-10" data-testid="input-api-url" />
                     </FormControl>
-                    <FormDescription>Base URL of the operator&apos;s TransityTerminal instance</FormDescription>
-                    <FormMessage />
+                    <FormDescription className="text-[10px]">URL base instance TransityTerminal operator</FormDescription>
+                    <FormMessage className="text-xs" />
                   </FormItem>
                 )}
               />
@@ -149,17 +150,12 @@ export default function OperatorNew() {
                 name="serviceKey"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Service Key</FormLabel>
+                    <FormLabel className="text-xs font-semibold">Service Key</FormLabel>
                     <FormControl>
-                      <Input
-                        {...field}
-                        type="password"
-                        placeholder="TERMINAL_SERVICE_KEY value"
-                        data-testid="input-service-key"
-                      />
+                      <Input {...field} type="password" placeholder="TERMINAL_SERVICE_KEY" className="rounded-xl h-10" data-testid="input-service-key" />
                     </FormControl>
-                    <FormDescription>X-Service-Key used to authenticate with the terminal</FormDescription>
-                    <FormMessage />
+                    <FormDescription className="text-[10px]">X-Service-Key untuk autentikasi ke terminal</FormDescription>
+                    <FormMessage className="text-xs" />
                   </FormItem>
                 )}
               />
@@ -170,11 +166,11 @@ export default function OperatorNew() {
                   name="commissionPct"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>Commission (%)</FormLabel>
+                      <FormLabel className="text-xs font-semibold">Komisi (%)</FormLabel>
                       <FormControl>
-                        <Input {...field} type="number" min={0} max={100} step={0.5} data-testid="input-commission" />
+                        <Input {...field} type="number" min={0} max={100} step={0.5} className="rounded-xl h-10" data-testid="input-commission" />
                       </FormControl>
-                      <FormMessage />
+                      <FormMessage className="text-xs" />
                     </FormItem>
                   )}
                 />
@@ -183,19 +179,19 @@ export default function OperatorNew() {
                   name="primaryColor"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>Brand Color</FormLabel>
+                      <FormLabel className="text-xs font-semibold">Warna Brand</FormLabel>
                       <FormControl>
                         <div className="flex gap-2">
-                          <Input {...field} placeholder="#134E4A" data-testid="input-primary-color" />
+                          <Input {...field} placeholder="#134E4A" className="rounded-xl h-10" data-testid="input-primary-color" />
                           <input
                             type="color"
                             value={field.value ?? "#134E4A"}
                             onChange={(e) => field.onChange(e.target.value)}
-                            className="h-10 w-10 rounded-md border border-input cursor-pointer"
+                            className="h-10 w-10 rounded-xl border border-input cursor-pointer p-0.5"
                           />
                         </div>
                       </FormControl>
-                      <FormMessage />
+                      <FormMessage className="text-xs" />
                     </FormItem>
                   )}
                 />
@@ -206,25 +202,23 @@ export default function OperatorNew() {
                 name="logoUrl"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Logo URL <span className="text-muted-foreground font-normal">(optional)</span></FormLabel>
+                    <FormLabel className="text-xs font-semibold">
+                      URL Logo <span className="text-muted-foreground font-normal">(opsional)</span>
+                    </FormLabel>
                     <FormControl>
-                      <Input {...field} placeholder="https://..." data-testid="input-logo-url" />
+                      <Input {...field} placeholder="https://..." className="rounded-xl h-10" data-testid="input-logo-url" />
                     </FormControl>
-                    <FormMessage />
+                    <FormMessage className="text-xs" />
                   </FormItem>
                 )}
               />
 
-              <div className="flex gap-3 pt-2">
-                <Button
-                  type="submit"
-                  disabled={createMutation.isPending}
-                  data-testid="button-submit-operator"
-                >
-                  {createMutation.isPending ? "Registering..." : "Register Operator"}
+              <div className="flex gap-2.5 pt-1">
+                <Button type="submit" disabled={createMutation.isPending} className="rounded-xl h-10" data-testid="button-submit-operator">
+                  {createMutation.isPending ? "Mendaftarkan..." : "Daftarkan Operator"}
                 </Button>
                 <Link href="/operators">
-                  <Button type="button" variant="outline">Cancel</Button>
+                  <Button type="button" variant="outline" className="rounded-xl h-10">Batal</Button>
                 </Link>
               </div>
             </form>

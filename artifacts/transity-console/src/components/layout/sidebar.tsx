@@ -1,6 +1,5 @@
 import { Link, useLocation } from "wouter";
 import { cn } from "@/lib/utils";
-import { useTheme } from "@/components/theme-provider";
 import {
   LayoutDashboard,
   BusFront,
@@ -8,9 +7,11 @@ import {
   Ticket,
   BarChart3,
   Moon,
-  Sun
+  Sun,
+  X,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { useTheme } from "@/components/theme-provider";
 
 const NAV_ITEMS = [
   { href: "/", label: "Dashboard", icon: LayoutDashboard },
@@ -20,52 +21,81 @@ const NAV_ITEMS = [
   { href: "/analytics", label: "Analytics", icon: BarChart3 },
 ];
 
-export function Sidebar() {
+interface SidebarNavProps {
+  onClose?: () => void;
+}
+
+export function SidebarNav({ onClose }: SidebarNavProps) {
   const [location] = useLocation();
   const { theme, setTheme } = useTheme();
 
   return (
-    <div className="flex flex-col w-64 bg-sidebar text-sidebar-foreground border-r border-sidebar-border min-h-[100dvh]">
-      <div className="p-6">
-        <Link href="/">
-          <div className="flex items-center gap-2 font-display text-xl font-bold text-white cursor-pointer">
-            <BusFront className="text-accent h-6 w-6" />
-            Transity<span className="text-accent">Console</span>
+    <div className="flex flex-col h-full bg-sidebar text-sidebar-foreground">
+      {/* Logo */}
+      <div className="flex items-center justify-between px-5 pt-5 pb-4 border-b border-sidebar-border">
+        <Link href="/" onClick={onClose}>
+          <div className="flex items-center gap-2.5 cursor-pointer">
+            <div className="w-8 h-8 rounded-xl bg-accent/20 flex items-center justify-center">
+              <BusFront className="h-4.5 w-4.5 text-accent" />
+            </div>
+            <div>
+              <span className="font-display font-bold text-base text-white tracking-tight leading-none">
+                Transity<span className="text-accent">Console</span>
+              </span>
+              <p className="text-[10px] text-sidebar-foreground/40 leading-none mt-0.5">OTA Admin</p>
+            </div>
           </div>
         </Link>
+        {onClose && (
+          <button
+            onClick={onClose}
+            className="lg:hidden w-7 h-7 rounded-lg flex items-center justify-center text-sidebar-foreground/50 hover:text-sidebar-foreground hover:bg-sidebar-accent/50 transition-colors"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        )}
       </div>
 
-      <nav className="flex-1 px-4 space-y-1">
+      {/* Nav */}
+      <nav className="flex-1 px-3 py-3 space-y-0.5 overflow-y-auto scrollbar-hide">
+        <p className="text-[10px] font-semibold text-sidebar-foreground/30 uppercase tracking-widest px-3 mb-2 mt-1">Menu</p>
         {NAV_ITEMS.map((item) => {
-          const isActive = location === item.href || (item.href !== "/" && location.startsWith(item.href));
+          const isActive =
+            location === item.href ||
+            (item.href !== "/" && location.startsWith(item.href));
           return (
-            <Link key={item.href} href={item.href}>
+            <Link key={item.href} href={item.href} onClick={onClose}>
               <div
                 className={cn(
-                  "flex items-center gap-3 px-3 py-2.5 rounded-md transition-colors cursor-pointer text-sm font-medium",
+                  "flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all duration-150 cursor-pointer text-[13.5px] font-medium",
                   isActive
-                    ? "bg-sidebar-accent text-sidebar-accent-foreground"
-                    : "text-sidebar-foreground/70 hover:bg-sidebar-accent/50 hover:text-sidebar-foreground"
+                    ? "bg-sidebar-accent text-sidebar-accent-foreground shadow-sm"
+                    : "text-sidebar-foreground/60 hover:bg-sidebar-accent/40 hover:text-sidebar-foreground"
                 )}
               >
-                <item.icon className="h-4 w-4" />
+                <item.icon className={cn("h-4 w-4 flex-shrink-0", isActive ? "text-accent" : "text-sidebar-foreground/50")} />
                 {item.label}
+                {isActive && (
+                  <div className="ml-auto w-1.5 h-1.5 rounded-full bg-accent" />
+                )}
               </div>
             </Link>
           );
         })}
       </nav>
 
-      <div className="p-4 border-t border-sidebar-border">
-        <Button
-          variant="ghost"
-          size="sm"
-          className="w-full justify-start gap-2 text-sidebar-foreground/70 hover:bg-sidebar-accent/50 hover:text-sidebar-foreground"
+      {/* Footer */}
+      <div className="px-3 pb-4 pt-3 border-t border-sidebar-border space-y-1">
+        <button
           onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
+          className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-[13px] font-medium text-sidebar-foreground/50 hover:bg-sidebar-accent/40 hover:text-sidebar-foreground transition-all"
         >
           {theme === "dark" ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
           {theme === "dark" ? "Light Mode" : "Dark Mode"}
-        </Button>
+        </button>
+        <div className="px-3 py-2">
+          <p className="text-[10px] text-sidebar-foreground/25">TransityConsole v0.1</p>
+        </div>
       </div>
     </div>
   );
