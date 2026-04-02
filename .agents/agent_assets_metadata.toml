@@ -1,0 +1,8 @@
+uploads = []
+generated = []
+
+[[outputs]]
+id = "PO741C_fbRH5KUSzgnOsh"
+uri = "file://docs/IMPLEMENTATION.md"
+type = "text"
+title = "TransityConsole — Dokumentasi Implementasi"
