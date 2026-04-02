@@ -64,3 +64,10 @@ timeoutMs = 20000
 
 [nix]
 channel = "stable-25_05"
+
+[userenv]
+
+[userenv.shared]
+LOG_LEVEL = "info"
+ADMIN_EMAIL = "admin@transity.id"
+ADMIN_PASSWORD = "TransityAdmin2024!"
