@@ -1,10 +1,11 @@
 import Fastify from "fastify";
 import cors from "@fastify/cors";
-import healthRoutes from "./routes/health.js";
-import operatorsRoutes from "./routes/operators.js";
-import terminalsRoutes from "./routes/terminals.js";
-import bookingsRoutes from "./routes/bookings.js";
-import analyticsRoutes from "./routes/analytics.js";
+import healthRoutes from "./modules/health/health.routes.js";
+import operatorsRoutes from "./modules/operators/operators.routes.js";
+import terminalsRoutes from "./modules/terminals/terminals.routes.js";
+import bookingsRoutes from "./modules/bookings/bookings.routes.js";
+import analyticsRoutes from "./modules/analytics/analytics.routes.js";
+import gatewayRoutes from "./modules/gateway/gateway.routes.js";
 
 export async function buildApp() {
   const app = Fastify({
@@ -29,6 +30,7 @@ export async function buildApp() {
     await api.register(terminalsRoutes);
     await api.register(bookingsRoutes);
     await api.register(analyticsRoutes);
+    await api.register(gatewayRoutes);
   }, { prefix: "/api" });
 
   return app;
