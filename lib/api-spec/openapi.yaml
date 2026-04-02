@@ -1,15 +1,24 @@
 openapi: 3.1.0
 info:
-  # Do not change the title, if the title changes, the import paths will be broken
   title: Api
   version: 0.1.0
-  description: API specification
+  description: TransityConsole API - OTA aggregation & operator management
 servers:
   - url: /api
     description: Base API path
 tags:
   - name: health
     description: Health operations
+  - name: operators
+    description: Operator registry management
+  - name: terminals
+    description: Terminal health monitoring
+  - name: trips
+    description: Aggregated trip search across operators
+  - name: bookings
+    description: Booking tracking across operators
+  - name: analytics
+    description: Analytics and reporting
 paths:
   /healthz:
     get:
@@ -24,6 +33,239 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+
+  /operators:
+    get:
+      operationId: listOperators
+      tags: [operators]
+      summary: List all operators
+      parameters:
+        - name: active
+          in: query
+          schema:
+            type: boolean
+        - name: page
+          in: query
+          schema:
+            type: integer
+            default: 1
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 20
+      responses:
+        "200":
+          description: List of operators
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OperatorListResponse"
+    post:
+      operationId: createOperator
+      tags: [operators]
+      summary: Register a new operator
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateOperatorBody"
+      responses:
+        "201":
+          description: Operator created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Operator"
+
+  /operators/{id}:
+    get:
+      operationId: getOperator
+      tags: [operators]
+      summary: Get operator by ID
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Operator details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Operator"
+    patch:
+      operationId: updateOperator
+      tags: [operators]
+      summary: Update operator
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateOperatorBody"
+      responses:
+        "200":
+          description: Operator updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Operator"
+    delete:
+      operationId: deleteOperator
+      tags: [operators]
+      summary: Delete operator
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Deleted
+
+  /operators/{id}/ping:
+    post:
+      operationId: pingOperatorTerminal
+      tags: [operators]
+      summary: Ping operator terminal health
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Ping result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TerminalPingResult"
+
+  /terminals/health:
+    get:
+      operationId: listTerminalHealth
+      tags: [terminals]
+      summary: Get health status of all registered terminals
+      responses:
+        "200":
+          description: Terminal health overview
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TerminalHealthOverview"
+
+  /bookings:
+    get:
+      operationId: listBookings
+      tags: [bookings]
+      summary: List all bookings across operators
+      parameters:
+        - name: operatorId
+          in: query
+          schema:
+            type: string
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [pending, confirmed, cancelled, completed]
+        - name: page
+          in: query
+          schema:
+            type: integer
+            default: 1
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 20
+        - name: startDate
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: endDate
+          in: query
+          schema:
+            type: string
+            format: date
+      responses:
+        "200":
+          description: Bookings list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BookingListResponse"
+
+  /analytics/summary:
+    get:
+      operationId: getAnalyticsSummary
+      tags: [analytics]
+      summary: Get overall analytics summary
+      responses:
+        "200":
+          description: Analytics summary
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AnalyticsSummary"
+
+  /analytics/operators:
+    get:
+      operationId: getOperatorAnalytics
+      tags: [analytics]
+      summary: Get per-operator analytics
+      parameters:
+        - name: period
+          in: query
+          schema:
+            type: string
+            enum: [7d, 30d, 90d]
+            default: 30d
+      responses:
+        "200":
+          description: Per-operator analytics
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/OperatorAnalytics"
+
+  /analytics/revenue:
+    get:
+      operationId: getRevenueAnalytics
+      tags: [analytics]
+      summary: Get revenue analytics over time
+      parameters:
+        - name: period
+          in: query
+          schema:
+            type: string
+            enum: [7d, 30d, 90d]
+            default: 30d
+      responses:
+        "200":
+          description: Revenue analytics data
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/RevenuePeriod"
+
 components:
   schemas:
     HealthStatus:
@@ -34,3 +276,323 @@ components:
       required:
         - status
 
+    Operator:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        slug:
+          type: string
+        apiUrl:
+          type: string
+        serviceKey:
+          type: string
+        active:
+          type: boolean
+        logoUrl:
+          type: string
+          nullable: true
+        commissionPct:
+          type: number
+        primaryColor:
+          type: string
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+      required:
+        - id
+        - name
+        - slug
+        - apiUrl
+        - serviceKey
+        - active
+        - commissionPct
+        - createdAt
+        - updatedAt
+
+    CreateOperatorBody:
+      type: object
+      properties:
+        name:
+          type: string
+        slug:
+          type: string
+        apiUrl:
+          type: string
+        serviceKey:
+          type: string
+        logoUrl:
+          type: string
+          nullable: true
+        commissionPct:
+          type: number
+          default: 0
+        primaryColor:
+          type: string
+          nullable: true
+      required:
+        - name
+        - slug
+        - apiUrl
+        - serviceKey
+
+    UpdateOperatorBody:
+      type: object
+      properties:
+        name:
+          type: string
+        apiUrl:
+          type: string
+        serviceKey:
+          type: string
+        active:
+          type: boolean
+        logoUrl:
+          type: string
+          nullable: true
+        commissionPct:
+          type: number
+        primaryColor:
+          type: string
+          nullable: true
+
+    OperatorListResponse:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/Operator"
+        total:
+          type: integer
+        page:
+          type: integer
+        limit:
+          type: integer
+        hasMore:
+          type: boolean
+      required:
+        - data
+        - total
+        - page
+        - limit
+        - hasMore
+
+    TerminalPingResult:
+      type: object
+      properties:
+        operatorId:
+          type: string
+        status:
+          type: string
+          enum: [online, offline, degraded]
+        latencyMs:
+          type: number
+          nullable: true
+        checkedAt:
+          type: string
+          format: date-time
+      required:
+        - operatorId
+        - status
+        - checkedAt
+
+    TerminalHealthEntry:
+      type: object
+      properties:
+        operatorId:
+          type: string
+        operatorName:
+          type: string
+        operatorSlug:
+          type: string
+        status:
+          type: string
+          enum: [online, offline, degraded]
+        latencyMs:
+          type: number
+          nullable: true
+        lastCheckedAt:
+          type: string
+          format: date-time
+          nullable: true
+      required:
+        - operatorId
+        - operatorName
+        - operatorSlug
+        - status
+
+    TerminalHealthOverview:
+      type: object
+      properties:
+        total:
+          type: integer
+        online:
+          type: integer
+        offline:
+          type: integer
+        degraded:
+          type: integer
+        terminals:
+          type: array
+          items:
+            $ref: "#/components/schemas/TerminalHealthEntry"
+      required:
+        - total
+        - online
+        - offline
+        - degraded
+        - terminals
+
+    Booking:
+      type: object
+      properties:
+        id:
+          type: string
+        operatorId:
+          type: string
+        operatorName:
+          type: string
+        passengerName:
+          type: string
+        passengerPhone:
+          type: string
+        tripId:
+          type: string
+        origin:
+          type: string
+        destination:
+          type: string
+        departureDate:
+          type: string
+          format: date
+        seatNumbers:
+          type: array
+          items:
+            type: string
+        totalAmount:
+          type: number
+        status:
+          type: string
+          enum: [pending, confirmed, cancelled, completed]
+        createdAt:
+          type: string
+          format: date-time
+      required:
+        - id
+        - operatorId
+        - operatorName
+        - passengerName
+        - passengerPhone
+        - tripId
+        - origin
+        - destination
+        - departureDate
+        - seatNumbers
+        - totalAmount
+        - status
+        - createdAt
+
+    BookingListResponse:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/Booking"
+        total:
+          type: integer
+        page:
+          type: integer
+        limit:
+          type: integer
+        hasMore:
+          type: boolean
+      required:
+        - data
+        - total
+        - page
+        - limit
+        - hasMore
+
+    AnalyticsSummary:
+      type: object
+      properties:
+        totalOperators:
+          type: integer
+        activeOperators:
+          type: integer
+        onlineTerminals:
+          type: integer
+        totalBookings:
+          type: integer
+        bookingsToday:
+          type: integer
+        totalRevenue:
+          type: number
+        revenueToday:
+          type: number
+        avgLatencyMs:
+          type: number
+          nullable: true
+      required:
+        - totalOperators
+        - activeOperators
+        - onlineTerminals
+        - totalBookings
+        - bookingsToday
+        - totalRevenue
+        - revenueToday
+
+    OperatorAnalytics:
+      type: object
+      properties:
+        operatorId:
+          type: string
+        operatorName:
+          type: string
+        operatorSlug:
+          type: string
+        bookingCount:
+          type: integer
+        revenue:
+          type: number
+        commissionEarned:
+          type: number
+        avgLatencyMs:
+          type: number
+          nullable: true
+        uptimePct:
+          type: number
+      required:
+        - operatorId
+        - operatorName
+        - operatorSlug
+        - bookingCount
+        - revenue
+        - commissionEarned
+        - uptimePct
+
+    RevenuePeriod:
+      type: object
+      properties:
+        date:
+          type: string
+          format: date
+        revenue:
+          type: number
+        commission:
+          type: number
+        bookingCount:
+          type: integer
+      required:
+        - date
+        - revenue
+        - commission
+        - bookingCount

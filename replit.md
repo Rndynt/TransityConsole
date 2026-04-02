@@ -16,12 +16,25 @@ pnpm workspace monorepo using TypeScript. Each package manages its own dependenc
 - **API codegen**: Orval (from OpenAPI spec)
 - **Build**: esbuild (CJS bundle)
 
+## Project: TransityConsole
+
+Internal admin dashboard OTA (Online Travel Agency) for the Transity ecosystem. Manages shuttle operator registries, aggregates terminal health monitoring, tracks bookings across operators, and shows revenue/commission analytics.
+
+**Visual style**: Teal forest green primary (`hsl(170 75% 18%)`), amber accent (`hsl(16 80% 58%)`), DM Sans + Outfit fonts, dark sidebar.
+
+**Pages**: Dashboard, Operators (list/new/edit), Terminal Health, Bookings, Analytics (with charts).
+
+**Backend routes**: `/api/operators` (CRUD + ping), `/api/terminals/health`, `/api/bookings`, `/api/analytics/*`
+
+**Database tables**: `operators`, `terminal_health`, `bookings`
+
 ## Structure
 
 ```text
 artifacts-monorepo/
 ├── artifacts/              # Deployable applications
-│   └── api-server/         # Express API server
+│   ├── api-server/         # Express API server
+│   └── transity-console/   # React + Vite admin dashboard
 ├── lib/                    # Shared libraries
 │   ├── api-spec/           # OpenAPI spec + Orval codegen config
 │   ├── api-client-react/   # Generated React Query hooks
