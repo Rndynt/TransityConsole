@@ -29,16 +29,25 @@ Internal admin dashboard and API gateway for the Transity ecosystem (Indonesian 
 **Backend routes**: `/api/operators` (CRUD + ping), `/api/terminals/health`, `/api/bookings`, `/api/analytics/*`, `/api/auth/*`, `/api/gateway/*`
 
 **Gateway endpoints** (TransityTerminal integration):
-- `GET /api/gateway/trips/search?originCity=&destinationCity=&date=&passengers=` — aggregated trip search
-- `GET /api/gateway/trips/:tripId` — trip detail (tripId format: `operatorSlug:originalId`)
-- `GET /api/gateway/trips/:tripId/seatmap?originSeq=&destinationSeq=` — seatmap proxy
+- `GET /api/gateway/trips/search?originCity=&destinationCity=&date=&passengers=` — aggregated trip search (cached 90s)
+- `GET /api/gateway/trips/:tripId?serviceDate=` — trip detail; virtual trips auto-materialize via `POST /api/app/trips/materialize` on terminal, falls back to search data if endpoint not deployed yet
+- `GET /api/gateway/trips/:tripId/seatmap?originSeq=&destinationSeq=&serviceDate=` — seatmap (cached 45s); virtual trips materialize first for real seat data
 - `GET /api/gateway/trips/:tripId/reviews` — trip reviews proxy
-- `GET /api/gateway/cities` — aggregated cities from all operators
-- `GET /api/gateway/operators/:operatorSlug/info` — operator brand info
-- `GET /api/gateway/service-lines` — aggregated service lines
-- `POST /api/gateway/bookings` — create booking (multi-passenger, with serviceDate, stops, seatNo)
+- `GET /api/gateway/cities` — aggregated cities from all operators (cached 5min)
+- `GET /api/gateway/operators/:operatorSlug/info` — operator brand info (cached 15min)
+- `GET /api/gateway/service-lines` — aggregated service lines (cached 5min)
+- `POST /api/gateway/bookings` — create booking (invalidates seatmap cache on success)
 - `GET /api/gateway/bookings/:bookingId` — get booking by ID
 - `POST /api/gateway/payments/webhook` — forward payment webhook to terminal (HMAC-SHA256 signed)
+
+**Gateway caching** (per REQ_UPDATE_CONSOLE_SEATMAP_CACHE):
+- Seatmap: 45s TTL, invalidated on booking success or seat-unavailable error
+- Search: 90s TTL
+- Cities/Service Lines: 5min TTL
+- Operator Info: 15min TTL
+- Materialized trip IDs: persisted in-memory (idempotent)
+
+**Error translation**: All terminal errors are translated to user-friendly Bahasa Indonesia messages. Technical details logged server-side only.
 
 **Database tables**: `operators` (+ `webhookSecret`), `terminal_health`, `bookings` (+ `providerRef`, `holdExpiresAt`, `paymentMethod`, `passengersJson`, `originStopId`, `destinationStopId`, `serviceDate`), `admin_users`, `api_keys`
 

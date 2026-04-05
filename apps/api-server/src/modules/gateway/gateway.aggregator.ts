@@ -4,9 +4,47 @@ import * as operatorsRepo from "../operators/operators.repository.js";
 const TERMINAL_TIMEOUT_MS = 15000;
 const MAX_CONCURRENT = 10;
 
-const tripCache = new Map<string, { originCity: string; destCity: string; serviceDate: string }>();
-const CACHE_TTL_MS = 30 * 60 * 1000;
-let lastCacheClean = Date.now();
+const CACHE_TTL = {
+  SEATMAP: 45 * 1000,
+  SEARCH: 90 * 1000,
+  CITIES: 5 * 60 * 1000,
+  SERVICE_LINES: 5 * 60 * 1000,
+  OPERATOR_INFO: 15 * 60 * 1000,
+} as const;
+
+interface CacheEntry<T> {
+  data: T;
+  expiresAt: number;
+}
+
+const cache = {
+  search: new Map<string, CacheEntry<SearchResult>>(),
+  tripContext: new Map<string, { originCity: string; destCity: string; serviceDate: string }>(),
+  seatmap: new Map<string, CacheEntry<Record<string, unknown>>>(),
+  cities: null as CacheEntry<{ cities: string[]; byOperator: Array<{ operatorSlug: string; cities: string[] }> }> | null,
+  serviceLines: null as CacheEntry<{ serviceLines: Array<Record<string, unknown>>; byOperator: Array<{ operatorSlug: string; serviceLines: Array<Record<string, unknown>> }> }> | null,
+  operatorInfo: new Map<string, CacheEntry<Record<string, unknown>>>(),
+  materializedIds: new Map<string, string>(),
+};
+
+function getCached<T>(entry: CacheEntry<T> | undefined | null): T | null {
+  if (!entry) return null;
+  if (Date.now() > entry.expiresAt) return null;
+  return entry.data;
+}
+
+function cleanMap<T>(map: Map<string, CacheEntry<T>>): void {
+  const now = Date.now();
+  for (const [key, entry] of map) {
+    if (now > entry.expiresAt) map.delete(key);
+  }
+}
+
+setInterval(() => {
+  cleanMap(cache.search);
+  cleanMap(cache.seatmap);
+  cleanMap(cache.operatorInfo);
+}, 60_000);
 
 export interface TripSearchParams {
   originCity: string;
@@ -108,6 +146,179 @@ function mapTrip(operator: OperatorRow, t: Record<string, unknown>): TerminalTri
   };
 }
 
+function mapTripDetail(operator: OperatorRow, t: Record<string, unknown>): TerminalTrip {
+  const stops = t["stops"] as Array<Record<string, unknown>> | undefined;
+  if (stops && Array.isArray(stops) && stops.length >= 2 && !t["origin"]) {
+    const firstStop = stops[0];
+    const lastStop = stops[stops.length - 1];
+
+    const seatAvail = t["seatAvailability"] as Record<string, unknown> | undefined;
+    const availableSeats = seatAvail
+      ? Number(seatAvail["available"] ?? 0)
+      : Number(t["availableSeats"] ?? t["capacity"] ?? 0);
+
+    const rebuilt: Record<string, unknown> = {
+      ...t,
+      origin: {
+        stopId: String(firstStop["stopId"] ?? ""),
+        name: String(firstStop["name"] ?? ""),
+        city: String(firstStop["city"] ?? ""),
+        sequence: Number(firstStop["sequence"] ?? 1),
+        departAt: firstStop["departAt"] ?? null,
+        arriveAt: firstStop["arriveAt"] ?? null,
+      },
+      destination: {
+        stopId: String(lastStop["stopId"] ?? ""),
+        name: String(lastStop["name"] ?? ""),
+        city: String(lastStop["city"] ?? ""),
+        sequence: Number(lastStop["sequence"] ?? stops.length),
+        departAt: lastStop["departAt"] ?? null,
+        arriveAt: lastStop["arriveAt"] ?? null,
+      },
+      availableSeats,
+      farePerPerson: Number(t["farePerPerson"] ?? 0),
+    };
+    return mapTrip(operator, rebuilt);
+  }
+  return mapTrip(operator, t);
+}
+
+async function resolveOperator(tripId: string): Promise<{ operator: OperatorRow; originalId: string; operatorSlug: string; isVirtual: boolean } | null> {
+  const colonIdx = tripId.indexOf(":");
+  if (colonIdx === -1) return null;
+
+  const operatorSlug = tripId.slice(0, colonIdx);
+  const originalId = tripId.slice(colonIdx + 1);
+  const isVirtual = originalId.startsWith("virtual-");
+
+  const { rows: operators } = await operatorsRepo.findAll({ active: true }, { limit: 100, offset: 0 });
+  const operator = operators.find((o) => o.slug === operatorSlug);
+  if (!operator) return null;
+
+  return { operator, originalId, operatorSlug, isVirtual };
+}
+
+async function materializeTrip(
+  operator: OperatorRow,
+  virtualId: string,
+  serviceDate: string
+): Promise<string> {
+  const cacheKey = `${operator.slug}:${virtualId}:${serviceDate}`;
+  const cached = cache.materializedIds.get(cacheKey);
+  if (cached) return cached;
+
+  const baseId = virtualId.replace(/^virtual-/, "");
+
+  try {
+    const res = await fetch(`${operator.apiUrl}/api/app/trips/materialize`, {
+      method: "POST",
+      signal: AbortSignal.timeout(TERMINAL_TIMEOUT_MS),
+      headers: {
+        "X-Service-Key": operator.serviceKey,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ baseId, serviceDate }),
+    });
+
+    if (res.status === 404) {
+      console.warn(`[gateway] Materialize endpoint not available on ${operator.slug}, trying detail fallback`);
+      return await materializeFallback(operator, virtualId, serviceDate, cacheKey);
+    }
+
+    if (!res.ok) {
+      const errBody = await res.json().catch(() => ({})) as Record<string, unknown>;
+      const errMsg = String(errBody["error"] ?? errBody["message"] ?? `HTTP ${res.status}`);
+      throw new GatewayError(errMsg, res.status);
+    }
+
+    const body = (await res.json()) as Record<string, unknown>;
+    const realTripId = String(body["tripId"] ?? "");
+    if (!realTripId) {
+      throw new GatewayError("Terminal tidak mengembalikan tripId.", 502);
+    }
+
+    cache.materializedIds.set(cacheKey, realTripId);
+    return realTripId;
+  } catch (e) {
+    if (e instanceof GatewayError) throw e;
+    console.warn(`[gateway] Materialize failed for ${operator.slug}, trying fallback:`, e instanceof Error ? e.message : e);
+    return await materializeFallback(operator, virtualId, serviceDate, cacheKey);
+  }
+}
+
+async function materializeFallback(
+  operator: OperatorRow,
+  virtualId: string,
+  serviceDate: string,
+  cacheKey: string
+): Promise<string> {
+  const detailUrl = new URL(`${operator.apiUrl}/api/app/trips/${encodeURIComponent(virtualId)}`);
+  detailUrl.searchParams.set("serviceDate", serviceDate);
+
+  try {
+    const res = await fetch(detailUrl.toString(), {
+      signal: AbortSignal.timeout(TERMINAL_TIMEOUT_MS),
+      headers: { "X-Service-Key": operator.serviceKey },
+    });
+
+    if (res.ok) {
+      const body = (await res.json()) as Record<string, unknown>;
+      const realId = String(body["tripId"] ?? body["id"] ?? "");
+      if (realId && !realId.startsWith("virtual-")) {
+        cache.materializedIds.set(cacheKey, realId);
+        return realId;
+      }
+    }
+  } catch {
+  }
+
+  return virtualId;
+}
+
+export class GatewayError extends Error {
+  constructor(
+    message: string,
+    public statusCode: number,
+    public code?: string
+  ) {
+    super(message);
+    this.name = "GatewayError";
+  }
+}
+
+function translateError(err: unknown, context: string): GatewayError {
+  const msg = err instanceof Error ? err.message : String(err);
+  const statusCode = err instanceof GatewayError ? err.statusCode : 502;
+
+  if (msg.includes("not found") || msg.includes("Trip not found")) {
+    return new GatewayError("Perjalanan tidak ditemukan. Silakan cari ulang.", 404, "NOT_FOUND");
+  }
+  if (msg.includes("not eligible") || msg.includes("base-not-eligible")) {
+    return new GatewayError("Jadwal tidak tersedia untuk tanggal ini.", 422, "NOT_ELIGIBLE");
+  }
+  if (msg.includes("seat") && (msg.includes("unavailable") || msg.includes("not available") || msg.includes("already"))) {
+    return new GatewayError("Kursi sudah tidak tersedia. Silakan pilih kursi lain.", 409, "SEAT_UNAVAILABLE");
+  }
+  if (msg.includes("Validation") || msg.includes("Invalid") || msg.includes("required")) {
+    return new GatewayError("Data yang dikirim tidak valid. Silakan periksa kembali.", 400, "VALIDATION_ERROR");
+  }
+  if (msg.includes("Unauthorized") || msg.includes("Service-Key") || msg.includes("INVALID_SERVICE_KEY")) {
+    console.error(`[gateway] Auth error with terminal (${context}):`, msg);
+    return new GatewayError("Terjadi gangguan koneksi dengan operator.", 502, "AUTH_ERROR");
+  }
+  if (msg.includes("timeout") || msg.includes("TIMEOUT") || msg.includes("AbortError")) {
+    console.error(`[gateway] Timeout (${context}):`, msg);
+    return new GatewayError("Layanan sedang sibuk. Coba lagi nanti.", 504, "TIMEOUT");
+  }
+  if (statusCode >= 500 || msg.includes("ECONNREFUSED") || msg.includes("fetch failed")) {
+    console.error(`[gateway] Terminal error (${context}):`, msg);
+    return new GatewayError("Terjadi kesalahan sistem. Coba lagi nanti.", 502, "TERMINAL_ERROR");
+  }
+
+  console.error(`[gateway] Unhandled error (${context}):`, msg);
+  return new GatewayError("Terjadi kesalahan. Coba lagi nanti.", statusCode >= 400 ? statusCode : 502, "UNKNOWN");
+}
+
 async function fetchTripsFromTerminal(operator: OperatorRow, params: TripSearchParams): Promise<TerminalTrip[]> {
   const url = new URL(`${operator.apiUrl}/api/app/trips/search`);
   url.searchParams.set("originCity", params.originCity);
@@ -131,6 +342,10 @@ async function fetchTripsFromTerminal(operator: OperatorRow, params: TripSearchP
 }
 
 export async function searchTrips(params: TripSearchParams): Promise<SearchResult> {
+  const searchKey = `${params.originCity}|${params.destinationCity}|${params.date}|${params.passengers ?? ""}`;
+  const cached = getCached(cache.search.get(searchKey));
+  if (cached) return cached;
+
   const { rows: operators } = await operatorsRepo.findAll({ active: true }, { limit: 100, offset: 0 });
   const limit = pLimit(MAX_CONCURRENT);
   const errors: Array<{ operatorSlug: string; error: string }> = [];
@@ -152,70 +367,51 @@ export async function searchTrips(params: TripSearchParams): Promise<SearchResul
     }
   });
 
-  if (Date.now() - lastCacheClean > CACHE_TTL_MS) {
-    tripCache.clear();
-    lastCacheClean = Date.now();
-  }
   for (const trip of trips) {
-    tripCache.set(trip.tripId, {
+    cache.tripContext.set(trip.tripId, {
       originCity: params.originCity,
       destCity: params.destinationCity,
       serviceDate: trip.serviceDate,
     });
   }
 
-  trips.sort((a, b) => a.farePerPerson !== b.farePerPerson ? a.farePerPerson - b.farePerPerson : (a.origin.departureTime ?? "").localeCompare(b.origin.departureTime ?? ""));
-  return { trips, errors, totalOperators: operators.length, respondedOperators: operators.length - errors.length };
+  trips.sort((a, b) =>
+    a.farePerPerson !== b.farePerPerson
+      ? a.farePerPerson - b.farePerPerson
+      : (a.origin.departureTime ?? "").localeCompare(b.origin.departureTime ?? "")
+  );
+
+  const result: SearchResult = { trips, errors, totalOperators: operators.length, respondedOperators: operators.length - errors.length };
+
+  cache.search.set(searchKey, { data: result, expiresAt: Date.now() + CACHE_TTL.SEARCH });
+  return result;
 }
 
 export async function getTripById(tripId: string, serviceDate?: string): Promise<Record<string, unknown> | null> {
-  const colonIdx = tripId.indexOf(":");
-  if (colonIdx === -1) return null;
+  const resolved = await resolveOperator(tripId);
+  if (!resolved) return null;
+  const { operator, originalId, operatorSlug, isVirtual } = resolved;
 
-  const operatorSlug = tripId.slice(0, colonIdx);
-  const originalId = tripId.slice(colonIdx + 1);
-  const isVirtual = originalId.startsWith("virtual-");
+  let realId = originalId;
 
-  const { rows: operators } = await operatorsRepo.findAll({ active: true }, { limit: 100, offset: 0 });
-  const operator = operators.find((o) => o.slug === operatorSlug);
-  if (!operator) return null;
-
-  if (isVirtual && serviceDate) {
-    const searchUrl = new URL(`${operator.apiUrl}/api/app/trips/search`);
-    const rawOriginCity = tripCache.get(tripId)?.originCity;
-    const rawDestCity = tripCache.get(tripId)?.destCity;
-    if (rawOriginCity && rawDestCity) {
-      searchUrl.searchParams.set("originCity", rawOriginCity);
-      searchUrl.searchParams.set("destinationCity", rawDestCity);
-    } else {
-      searchUrl.searchParams.set("originCity", "");
-      searchUrl.searchParams.set("destinationCity", "");
+  if (isVirtual) {
+    if (!serviceDate) {
+      const ctx = cache.tripContext.get(tripId);
+      serviceDate = ctx?.serviceDate;
     }
-    searchUrl.searchParams.set("date", serviceDate);
+    if (!serviceDate) {
+      throw new GatewayError("Parameter serviceDate diperlukan untuk jadwal virtual.", 400, "MISSING_SERVICE_DATE");
+    }
 
     try {
-      const searchRes = await fetch(searchUrl.toString(), {
-        signal: AbortSignal.timeout(TERMINAL_TIMEOUT_MS),
-        headers: { "X-Service-Key": operator.serviceKey, "Content-Type": "application/json" },
-      });
-      if (searchRes.ok) {
-        const body = (await searchRes.json()) as Record<string, unknown> | unknown[];
-        const trips = Array.isArray(body) ? body : ((body as Record<string, unknown>).data ?? (body as Record<string, unknown>).trips ?? []) as unknown[];
-        const match = (trips as Array<Record<string, unknown>>).find(
-          (t) => String(t["tripId"] ?? "") === originalId
-        );
-        if (match) {
-          const mapped = mapTrip(operator, match);
-          return { ...mapped, raw: match };
-        }
-      }
-    } catch {
-      // fall through to direct fetch
+      realId = await materializeTrip(operator, originalId, serviceDate);
+    } catch (e) {
+      throw translateError(e, `materialize ${tripId}`);
     }
   }
 
-  const url = new URL(`${operator.apiUrl}/api/app/trips/${encodeURIComponent(originalId)}`);
-  if (isVirtual && serviceDate) {
+  const url = new URL(`${operator.apiUrl}/api/app/trips/${encodeURIComponent(realId)}`);
+  if (serviceDate) {
     url.searchParams.set("serviceDate", serviceDate);
   }
 
@@ -225,45 +421,77 @@ export async function getTripById(tripId: string, serviceDate?: string): Promise
       headers: { "X-Service-Key": operator.serviceKey },
     });
 
-    if (!res.ok) return null;
+    if (!res.ok) {
+      if (res.status === 404 && isVirtual && serviceDate) {
+        return await getTripFromSearch(operator, operatorSlug, originalId, serviceDate);
+      }
+      if (res.status === 404) return null;
+      const errBody = await res.json().catch(() => ({})) as Record<string, unknown>;
+      const errMsg = String(errBody["error"] ?? `HTTP ${res.status}`);
+      if (isVirtual && serviceDate && (errMsg.includes("not been materialized") || errMsg.includes("not found"))) {
+        return await getTripFromSearch(operator, operatorSlug, originalId, serviceDate);
+      }
+      throw translateError(new GatewayError(errMsg, res.status), `getTripDetail ${tripId}`);
+    }
 
     const trip = (await res.json()) as Record<string, unknown>;
-    const mapped = mapTrip(operator, trip);
+    const mapped = mapTripDetail(operator, trip);
+
+    if (isVirtual) {
+      return {
+        ...mapped,
+        tripId: `${operatorSlug}:${originalId}`,
+        materializedTripId: realId !== originalId ? realId : undefined,
+        raw: trip,
+      };
+    }
+
     return { ...mapped, raw: trip };
-  } catch {
-    return null;
+  } catch (e) {
+    if (e instanceof GatewayError) throw e;
+    if (isVirtual && serviceDate) {
+      try {
+        return await getTripFromSearch(operator, operatorSlug, originalId, serviceDate);
+      } catch {
+      }
+    }
+    throw translateError(e, `getTripDetail ${tripId}`);
   }
 }
 
-function generateDefaultSeatmap(
-  vehicleClass: string,
-  capacity: number,
-  tripId: string,
-  operatorSlug: string
-): Record<string, unknown> {
-  const cols = vehicleClass.includes("premio") ? 3 : 3;
-  const rows = Math.ceil(capacity / cols);
-  const seatMap: Array<{ col: number; row: number; class: string; seat_no: string }> = [];
-  const seatAvailability: Record<string, { available: boolean; held: boolean }> = {};
-  const letters = ["A", "B", "C", "D"];
+async function getTripFromSearch(
+  operator: OperatorRow,
+  operatorSlug: string,
+  virtualId: string,
+  serviceDate: string
+): Promise<Record<string, unknown> | null> {
+  const ctx = cache.tripContext.get(`${operatorSlug}:${virtualId}`);
+  if (!ctx) return null;
 
-  let count = 0;
-  for (let r = 1; r <= rows && count < capacity; r++) {
-    for (let c = 1; c <= cols && count < capacity; c++) {
-      const seatNo = `${r}${letters[c - 1] ?? String(c)}`;
-      seatMap.push({ col: c, row: r, class: vehicleClass.split("-")[0] ?? "commuter", seat_no: seatNo });
-      seatAvailability[seatNo] = { available: true, held: false };
-      count++;
-    }
+  const searchUrl = new URL(`${operator.apiUrl}/api/app/trips/search`);
+  searchUrl.searchParams.set("originCity", ctx.originCity);
+  searchUrl.searchParams.set("destinationCity", ctx.destCity);
+  searchUrl.searchParams.set("date", serviceDate);
+
+  try {
+    const res = await fetch(searchUrl.toString(), {
+      signal: AbortSignal.timeout(TERMINAL_TIMEOUT_MS),
+      headers: { "X-Service-Key": operator.serviceKey, "Content-Type": "application/json" },
+    });
+    if (!res.ok) return null;
+
+    const body = (await res.json()) as Record<string, unknown> | unknown[];
+    const trips = Array.isArray(body) ? body : ((body as Record<string, unknown>).data ?? (body as Record<string, unknown>).trips ?? []) as unknown[];
+    const match = (trips as Array<Record<string, unknown>>).find(
+      (t) => String(t["tripId"] ?? "") === virtualId
+    );
+    if (!match) return null;
+
+    const mapped = mapTrip(operator, match);
+    return { ...mapped, raw: match };
+  } catch {
+    return null;
   }
-
-  return {
-    layout: { rows, cols, seatMap },
-    seatAvailability,
-    tripId,
-    operatorSlug,
-    isVirtual: true,
-  };
 }
 
 export async function getSeatmap(
@@ -272,93 +500,99 @@ export async function getSeatmap(
   destinationSeq: number,
   serviceDate?: string
 ): Promise<Record<string, unknown> | null> {
-  const colonIdx = tripId.indexOf(":");
-  if (colonIdx === -1) return null;
+  const resolved = await resolveOperator(tripId);
+  if (!resolved) return null;
+  const { operator, originalId, operatorSlug, isVirtual } = resolved;
 
-  const operatorSlug = tripId.slice(0, colonIdx);
-  const originalId = tripId.slice(colonIdx + 1);
-  const isVirtual = originalId.startsWith("virtual-");
-
-  const { rows: operators } = await operatorsRepo.findAll({ active: true }, { limit: 100, offset: 0 });
-  const operator = operators.find((o) => o.slug === operatorSlug);
-  if (!operator) return null;
-
-  if (isVirtual) {
-    if (!serviceDate) {
-      throw new Error("serviceDate is required for virtual trip seatmaps");
-    }
-
-    const cached = tripCache.get(`${operatorSlug}:${originalId}`);
-    if (cached) {
-      const searchUrl = new URL(`${operator.apiUrl}/api/app/trips/search`);
-      searchUrl.searchParams.set("originCity", cached.originCity);
-      searchUrl.searchParams.set("destinationCity", cached.destCity);
-      searchUrl.searchParams.set("date", serviceDate);
-
-      try {
-        const searchRes = await fetch(searchUrl.toString(), {
-          signal: AbortSignal.timeout(TERMINAL_TIMEOUT_MS),
-          headers: { "X-Service-Key": operator.serviceKey, "Content-Type": "application/json" },
-        });
-        if (searchRes.ok) {
-          const body = (await searchRes.json()) as Record<string, unknown> | unknown[];
-          const trips = Array.isArray(body) ? body : ((body as Record<string, unknown>).data ?? (body as Record<string, unknown>).trips ?? []) as unknown[];
-          const match = (trips as Array<Record<string, unknown>>).find(
-            (t) => String(t["tripId"] ?? "") === originalId
-          );
-          if (match) {
-            const baseId = match["_baseId"] as string | undefined;
-            if (baseId) {
-              const seatUrl = new URL(`${operator.apiUrl}/api/app/trips/${encodeURIComponent(baseId)}/seatmap`);
-              seatUrl.searchParams.set("originSeq", String(originSeq));
-              seatUrl.searchParams.set("destinationSeq", String(destinationSeq));
-              const seatRes = await fetch(seatUrl.toString(), {
-                signal: AbortSignal.timeout(TERMINAL_TIMEOUT_MS),
-                headers: { "X-Service-Key": operator.serviceKey },
-              });
-              if (seatRes.ok) {
-                const data = (await seatRes.json()) as Record<string, unknown>;
-                return { ...data, tripId: `${operatorSlug}:${originalId}`, operatorSlug, isVirtual: true };
-              }
-            }
-
-            const vehicleClass = String(match["vehicleClass"] ?? "commuter-14");
-            const capacity = Number(match["availableSeats"] ?? 14);
-            return generateDefaultSeatmap(vehicleClass, capacity, `${operatorSlug}:${originalId}`, operatorSlug);
-          }
-        }
-      } catch {
-        // fall through
-      }
-    }
-
-    const vehicleClass = "commuter-14";
-    return generateDefaultSeatmap(vehicleClass, 14, `${operatorSlug}:${originalId}`, operatorSlug);
+  let resolvedDate = serviceDate;
+  if (!resolvedDate) {
+    const ctx = cache.tripContext.get(tripId);
+    resolvedDate = ctx?.serviceDate;
   }
 
-  const url = new URL(`${operator.apiUrl}/api/app/trips/${encodeURIComponent(originalId)}/seatmap`);
+  const seatmapCacheKey = `${operatorSlug}:${originalId}:${originSeq}:${destinationSeq}:${resolvedDate ?? ""}`;
+  const cachedSeatmap = getCached(cache.seatmap.get(seatmapCacheKey));
+  if (cachedSeatmap) return cachedSeatmap;
+
+  let realId = originalId;
+
+  if (isVirtual) {
+    if (!resolvedDate) {
+      throw new GatewayError("Parameter serviceDate diperlukan untuk jadwal virtual.", 400, "MISSING_SERVICE_DATE");
+    }
+
+    try {
+      realId = await materializeTrip(operator, originalId, resolvedDate);
+    } catch (e) {
+      throw translateError(e, `materialize for seatmap ${tripId}`);
+    }
+  }
+
+  const url = new URL(`${operator.apiUrl}/api/app/trips/${encodeURIComponent(realId)}/seatmap`);
   url.searchParams.set("originSeq", String(originSeq));
   url.searchParams.set("destinationSeq", String(destinationSeq));
 
-  const res = await fetch(url.toString(), {
-    signal: AbortSignal.timeout(TERMINAL_TIMEOUT_MS),
-    headers: { "X-Service-Key": operator.serviceKey },
-  });
+  try {
+    const res = await fetch(url.toString(), {
+      signal: AbortSignal.timeout(TERMINAL_TIMEOUT_MS),
+      headers: { "X-Service-Key": operator.serviceKey },
+    });
 
-  if (!res.ok) {
-    if (res.status === 404) return null;
-    throw new Error(`Terminal returned HTTP ${res.status}`);
+    if (!res.ok) {
+      if (res.status === 404) return null;
+      const errBody = await res.json().catch(() => ({})) as Record<string, unknown>;
+      throw translateError(
+        new GatewayError(String(errBody["error"] ?? `HTTP ${res.status}`), res.status),
+        `getSeatmap ${tripId}`
+      );
+    }
+
+    const data = (await res.json()) as Record<string, unknown>;
+    const result = {
+      ...data,
+      tripId: `${operatorSlug}:${originalId}`,
+      operatorSlug,
+      ...(isVirtual && realId !== originalId ? { materializedTripId: realId } : {}),
+    };
+
+    cache.seatmap.set(seatmapCacheKey, { data: result, expiresAt: Date.now() + CACHE_TTL.SEATMAP });
+    return result;
+  } catch (e) {
+    if (e instanceof GatewayError) throw e;
+    throw translateError(e, `getSeatmap ${tripId}`);
+  }
+}
+
+export function invalidateSeatmapCache(tripId: string): void {
+  const colonIdx = tripId.indexOf(":");
+  if (colonIdx === -1) return;
+  const operatorSlug = tripId.slice(0, colonIdx);
+  const originalId = tripId.slice(colonIdx + 1);
+  const keyPrefix = `${operatorSlug}:${originalId}:`;
+
+  for (const key of cache.seatmap.keys()) {
+    if (key.startsWith(keyPrefix)) {
+      cache.seatmap.delete(key);
+    }
   }
 
-  const data = (await res.json()) as Record<string, unknown>;
-  return {
-    ...data,
-    tripId: `${operator.slug}:${originalId}`,
-    operatorSlug: operator.slug,
-  };
+  const materializedId = cache.materializedIds.get(`${operatorSlug}:${originalId}`);
+  if (materializedId) {
+    const matPrefix = `${operatorSlug}:${materializedId}:`;
+    for (const key of cache.seatmap.keys()) {
+      if (key.startsWith(matPrefix)) {
+        cache.seatmap.delete(key);
+      }
+    }
+  }
+
+  cache.search.clear();
 }
 
 export async function getCities(): Promise<{ cities: string[]; byOperator: Array<{ operatorSlug: string; cities: string[] }> }> {
+  const cached = getCached(cache.cities);
+  if (cached) return cached;
+
   const { rows: operators } = await operatorsRepo.findAll({ active: true }, { limit: 100, offset: 0 });
   const limit = pLimit(MAX_CONCURRENT);
   const allCities = new Set<string>();
@@ -378,16 +612,20 @@ export async function getCities(): Promise<{ cities: string[]; byOperator: Array
           cities.forEach((c) => allCities.add(c));
           byOperator.push({ operatorSlug: op.slug, cities });
         } catch {
-          // skip terminals that are down
         }
       })
     )
   );
 
-  return { cities: Array.from(allCities).sort(), byOperator };
+  const result = { cities: Array.from(allCities).sort(), byOperator };
+  cache.cities = { data: result, expiresAt: Date.now() + CACHE_TTL.CITIES };
+  return result;
 }
 
 export async function getOperatorInfo(operatorSlug: string): Promise<Record<string, unknown> | null> {
+  const cachedInfo = getCached(cache.operatorInfo.get(operatorSlug));
+  if (cachedInfo) return cachedInfo;
+
   const { rows: operators } = await operatorsRepo.findAll({ active: true }, { limit: 100, offset: 0 });
   const operator = operators.find((o) => o.slug === operatorSlug);
   if (!operator) return null;
@@ -399,17 +637,22 @@ export async function getOperatorInfo(operatorSlug: string): Promise<Record<stri
     });
     if (!res.ok) return null;
     const data = (await res.json()) as Record<string, unknown>;
-    return {
+    const result = {
       ...data,
       operatorId: operator.id,
       operatorSlug: operator.slug,
     };
+    cache.operatorInfo.set(operatorSlug, { data: result, expiresAt: Date.now() + CACHE_TTL.OPERATOR_INFO });
+    return result;
   } catch {
     return null;
   }
 }
 
 export async function getServiceLines(): Promise<{ serviceLines: Array<Record<string, unknown>>; byOperator: Array<{ operatorSlug: string; serviceLines: Array<Record<string, unknown>> }> }> {
+  const cached = getCached(cache.serviceLines);
+  if (cached) return cached;
+
   const { rows: operators } = await operatorsRepo.findAll({ active: true }, { limit: 100, offset: 0 });
   const limit = pLimit(MAX_CONCURRENT);
   const allLines: Array<Record<string, unknown>> = [];
@@ -430,28 +673,37 @@ export async function getServiceLines(): Promise<{ serviceLines: Array<Record<st
           allLines.push(...tagged);
           byOperator.push({ operatorSlug: op.slug, serviceLines: tagged });
         } catch {
-          // skip
         }
       })
     )
   );
 
-  return { serviceLines: allLines, byOperator };
+  const result = { serviceLines: allLines, byOperator };
+  cache.serviceLines = { data: result, expiresAt: Date.now() + CACHE_TTL.SERVICE_LINES };
+  return result;
 }
 
 export async function getReviews(tripId: string): Promise<Record<string, unknown> | null> {
-  const colonIdx = tripId.indexOf(":");
-  if (colonIdx === -1) return null;
+  const resolved = await resolveOperator(tripId);
+  if (!resolved) return null;
+  const { operator, originalId } = resolved;
 
-  const operatorSlug = tripId.slice(0, colonIdx);
-  const originalId = tripId.slice(colonIdx + 1);
-
-  const { rows: operators } = await operatorsRepo.findAll({ active: true }, { limit: 100, offset: 0 });
-  const operator = operators.find((o) => o.slug === operatorSlug);
-  if (!operator) return null;
+  let realId = originalId;
+  if (resolved.isVirtual) {
+    const ctx = cache.tripContext.get(tripId);
+    if (ctx?.serviceDate) {
+      try {
+        realId = await materializeTrip(operator, originalId, ctx.serviceDate);
+      } catch {
+        return { reviews: [], count: 0, avgRating: 0 };
+      }
+    } else {
+      return { reviews: [], count: 0, avgRating: 0 };
+    }
+  }
 
   try {
-    const res = await fetch(`${operator.apiUrl}/api/app/trips/${encodeURIComponent(originalId)}/reviews`, {
+    const res = await fetch(`${operator.apiUrl}/api/app/trips/${encodeURIComponent(realId)}/reviews`, {
       signal: AbortSignal.timeout(TERMINAL_TIMEOUT_MS),
       headers: { "X-Service-Key": operator.serviceKey },
     });
