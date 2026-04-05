@@ -1,6 +1,6 @@
 kind = "web"
-previewPath = "/"
-title = "TransityConsole"
+previewPath = "/__dev-vite"
+title = "TransityConsole (Vite Dev)"
 version = "1.0.0"
 id = "artifacts/transity-console"
 router = "path"
@@ -11,8 +11,8 @@ version = "1.0.0"
 
 [[services]]
 name = "web"
-paths = [ "/" ]
-localPort = 19375
+paths = [ "/__dev-vite" ]
+localPort = 3000
 
 [services.development]
 run = "pnpm --filter @workspace/transity-console run dev"
@@ -27,5 +27,5 @@ from = "/*"
 to = "/index.html"
 
 [services.env]
-PORT = "19375"
+PORT = "3000"
 BASE_PATH = "/"

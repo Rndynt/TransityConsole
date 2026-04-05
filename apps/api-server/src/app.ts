@@ -69,6 +69,29 @@ export async function buildApp() {
     app.setNotFoundHandler((_req, reply) => {
       reply.sendFile("index.html", staticRoot);
     });
+  } else {
+    const vitePort = process.env.VITE_DEV_PORT ?? "3000";
+    app.setNotFoundHandler(async (request, reply) => {
+      try {
+        const targetUrl = `http://localhost:${vitePort}${request.url}`;
+        const proxyRes = await fetch(targetUrl, {
+          method: request.method,
+          headers: request.headers as Record<string, string>,
+          body: request.method !== "GET" && request.method !== "HEAD" ? request.body as string : undefined,
+          signal: AbortSignal.timeout(10000),
+        });
+        reply.status(proxyRes.status);
+        for (const [key, value] of proxyRes.headers.entries()) {
+          if (key.toLowerCase() !== "transfer-encoding") {
+            reply.header(key, value);
+          }
+        }
+        const body = Buffer.from(await proxyRes.arrayBuffer());
+        return reply.send(body);
+      } catch {
+        return reply.status(502).send({ error: "Frontend dev server unavailable" });
+      }
+    });
   }
 
   app.addHook("onReady", async () => {
