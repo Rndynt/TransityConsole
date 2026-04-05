@@ -43,14 +43,15 @@ const gatewayRoutes: FastifyPluginAsync = async (fastify) => {
 
   fastify.get("/gateway/trips/:tripId", async (request, reply) => {
     const { tripId } = request.params as { tripId: string };
-    const trip = await aggregator.getTripById(tripId);
+    const query = request.query as { serviceDate?: string };
+    const trip = await aggregator.getTripById(tripId, query.serviceDate);
     if (!trip) return reply.status(404).send({ error: "Trip not found" });
     return trip;
   });
 
   fastify.get("/gateway/trips/:tripId/seatmap", async (request, reply) => {
     const { tripId } = request.params as { tripId: string };
-    const query = request.query as { originSeq?: string; destinationSeq?: string };
+    const query = request.query as { originSeq?: string; destinationSeq?: string; serviceDate?: string };
     if (!query.originSeq || !query.destinationSeq) {
       return reply.status(400).send({ error: "originSeq and destinationSeq are required" });
     }
@@ -58,9 +59,10 @@ const gatewayRoutes: FastifyPluginAsync = async (fastify) => {
       const seatmap = await aggregator.getSeatmap(
         tripId,
         parseInt(query.originSeq, 10),
-        parseInt(query.destinationSeq, 10)
+        parseInt(query.destinationSeq, 10),
+        query.serviceDate
       );
-      if (!seatmap) return reply.status(404).send({ error: "Seatmap not found (trip may be virtual)" });
+      if (!seatmap) return reply.status(404).send({ error: "Seatmap not found" });
       return seatmap;
     } catch (e) {
       if (e instanceof Error) return reply.status(502).send({ error: e.message });
