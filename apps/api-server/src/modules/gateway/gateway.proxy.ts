@@ -137,7 +137,7 @@ export async function createBooking(req: BookingRequest): Promise<BookingResult>
     totalAmount,
     commissionAmount,
     externalBookingId,
-    status: "pending",
+    status: String(terminalResponse["status"] ?? "pending"),
     providerRef: providerRef || null,
     holdExpiresAt: holdExpiresAt ? new Date(holdExpiresAt) : null,
     paymentMethod: req.paymentMethod,
@@ -216,6 +216,7 @@ export async function forwardPaymentWebhook(payload: WebhookPayload): Promise<{ 
       signal: AbortSignal.timeout(TERMINAL_TIMEOUT_MS),
       headers: {
         "Content-Type": "application/json",
+        "X-Service-Key": operator.serviceKey,
         "X-Webhook-Signature": signature,
       },
       body: bodyStr,

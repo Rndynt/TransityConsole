@@ -18,7 +18,9 @@ pnpm workspace monorepo using TypeScript. Each package manages its own dependenc
 
 ## Project: TransityConsole
 
-Internal admin dashboard for the Transity ecosystem (Indonesian shuttle industry). Manages shuttle operator registries, aggregates terminal health monitoring, tracks bookings across operators, and shows revenue/commission analytics. Also serves as a BFF (Backend-for-Frontend) gateway that fans out trip search requests to multiple operator terminals.
+Internal admin dashboard and API gateway for the Transity ecosystem (Indonesian shuttle industry). Manages shuttle operator registries, aggregates terminal health monitoring, tracks bookings across operators, and shows revenue/commission analytics. Also serves as the central API gateway that fans out requests to multiple TransityTerminal instances (one per shuttle operator), providing TransityApp with a unified backend.
+
+**Ecosystem docs**: See `docs/ECOSYSTEM.md` for comprehensive documentation covering TransityApp integration, TransityTerminal communication, booking flow, payment webhooks, and operator setup.
 
 **Visual style**: Teal forest green primary (`hsl(170 75% 18%)`), amber accent (`hsl(16 80% 58%)`), DM Sans + Outfit fonts, dark sidebar.
 
