@@ -19,6 +19,8 @@ tags:
     description: Booking tracking across operators
   - name: analytics
     description: Analytics and reporting
+  - name: gateway
+    description: Gateway aggregation — proxy to TransityTerminal instances
 paths:
   /healthz:
     get:
@@ -266,6 +268,225 @@ paths:
                 items:
                   $ref: "#/components/schemas/RevenuePeriod"
 
+  /gateway/trips/search:
+    get:
+      operationId: gatewaySearchTrips
+      tags: [gateway]
+      summary: Aggregated trip search across all operators
+      parameters:
+        - name: originCity
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: destinationCity
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: date
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date
+        - name: passengers
+          in: query
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Aggregated search results
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GatewaySearchResult"
+
+  /gateway/trips/{tripId}:
+    get:
+      operationId: gatewayGetTrip
+      tags: [gateway]
+      summary: Get trip details from a specific operator
+      parameters:
+        - name: tripId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Trip details
+          content:
+            application/json:
+              schema:
+                type: object
+        "404":
+          description: Trip not found
+
+  /gateway/trips/{tripId}/seatmap:
+    get:
+      operationId: gatewayGetSeatmap
+      tags: [gateway]
+      summary: Get seatmap from a specific operator terminal
+      parameters:
+        - name: tripId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: originSeq
+          in: query
+          required: true
+          schema:
+            type: integer
+        - name: destinationSeq
+          in: query
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Seatmap data
+          content:
+            application/json:
+              schema:
+                type: object
+        "404":
+          description: Seatmap not found (trip may be virtual)
+
+  /gateway/trips/{tripId}/reviews:
+    get:
+      operationId: gatewayGetReviews
+      tags: [gateway]
+      summary: Get reviews for a trip
+      parameters:
+        - name: tripId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Trip reviews
+          content:
+            application/json:
+              schema:
+                type: object
+        "404":
+          description: Reviews not found
+
+  /gateway/cities:
+    get:
+      operationId: gatewayGetCities
+      tags: [gateway]
+      summary: Aggregated cities from all operators
+      responses:
+        "200":
+          description: Cities list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GatewayCitiesResult"
+
+  /gateway/operators/{operatorSlug}/info:
+    get:
+      operationId: gatewayGetOperatorInfo
+      tags: [gateway]
+      summary: Get operator brand info from terminal
+      parameters:
+        - name: operatorSlug
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Operator info
+          content:
+            application/json:
+              schema:
+                type: object
+        "404":
+          description: Operator not found
+
+  /gateway/service-lines:
+    get:
+      operationId: gatewayGetServiceLines
+      tags: [gateway]
+      summary: Aggregated service lines from all operators
+      responses:
+        "200":
+          description: Service lines
+          content:
+            application/json:
+              schema:
+                type: object
+
+  /gateway/bookings:
+    post:
+      operationId: gatewayCreateBooking
+      tags: [gateway]
+      summary: Create booking via operator terminal
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/GatewayBookingRequest"
+      responses:
+        "201":
+          description: Booking created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GatewayBookingResult"
+        "400":
+          description: Validation error
+        "503":
+          description: Terminal unavailable
+
+  /gateway/bookings/{bookingId}:
+    get:
+      operationId: gatewayGetBooking
+      tags: [gateway]
+      summary: Get booking by ID
+      parameters:
+        - name: bookingId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Booking details
+          content:
+            application/json:
+              schema:
+                type: object
+        "404":
+          description: Booking not found
+
+  /gateway/payments/webhook:
+    post:
+      operationId: gatewayPaymentWebhook
+      tags: [gateway]
+      summary: Forward payment confirmation to operator terminal
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/GatewayWebhookPayload"
+      responses:
+        "200":
+          description: Webhook forwarded
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GatewayWebhookResult"
+        "404":
+          description: Booking not found for providerRef
+
 components:
   schemas:
     HealthStatus:
@@ -299,6 +520,8 @@ components:
         primaryColor:
           type: string
           nullable: true
+        hasWebhookSecret:
+          type: boolean
         createdAt:
           type: string
           format: date-time
@@ -336,6 +559,9 @@ components:
         primaryColor:
           type: string
           nullable: true
+        webhookSecret:
+          type: string
+          nullable: true
       required:
         - name
         - slug
@@ -359,6 +585,9 @@ components:
         commissionPct:
           type: number
         primaryColor:
+          type: string
+          nullable: true
+        webhookSecret:
           type: string
           nullable: true
 
@@ -596,3 +825,234 @@ components:
         - revenue
         - commission
         - bookingCount
+
+    GatewayTripStop:
+      type: object
+      properties:
+        stopId:
+          type: string
+        cityName:
+          type: string
+        stopName:
+          type: string
+        sequence:
+          type: integer
+        departureTime:
+          type: string
+          nullable: true
+        arrivalTime:
+          type: string
+          nullable: true
+      required:
+        - stopId
+        - cityName
+        - stopName
+        - sequence
+
+    GatewayTrip:
+      type: object
+      properties:
+        tripId:
+          type: string
+        operatorId:
+          type: string
+        operatorName:
+          type: string
+        operatorSlug:
+          type: string
+        operatorLogo:
+          type: string
+          nullable: true
+        operatorColor:
+          type: string
+          nullable: true
+        serviceDate:
+          type: string
+          format: date
+        origin:
+          $ref: "#/components/schemas/GatewayTripStop"
+        destination:
+          $ref: "#/components/schemas/GatewayTripStop"
+        farePerPerson:
+          type: integer
+        availableSeats:
+          type: integer
+        isVirtual:
+          type: boolean
+        vehicleClass:
+          type: string
+          nullable: true
+      required:
+        - tripId
+        - operatorId
+        - operatorName
+        - operatorSlug
+        - serviceDate
+        - origin
+        - destination
+        - farePerPerson
+        - availableSeats
+        - isVirtual
+
+    GatewaySearchResult:
+      type: object
+      properties:
+        trips:
+          type: array
+          items:
+            $ref: "#/components/schemas/GatewayTrip"
+        errors:
+          type: array
+          items:
+            type: object
+            properties:
+              operatorSlug:
+                type: string
+              error:
+                type: string
+        totalOperators:
+          type: integer
+        respondedOperators:
+          type: integer
+      required:
+        - trips
+        - errors
+        - totalOperators
+        - respondedOperators
+
+    GatewayCitiesResult:
+      type: object
+      properties:
+        cities:
+          type: array
+          items:
+            type: string
+        byOperator:
+          type: array
+          items:
+            type: object
+            properties:
+              operatorSlug:
+                type: string
+              cities:
+                type: array
+                items:
+                  type: string
+      required:
+        - cities
+        - byOperator
+
+    GatewayPassengerInput:
+      type: object
+      properties:
+        fullName:
+          type: string
+        phone:
+          type: string
+        idNumber:
+          type: string
+        seatNo:
+          type: string
+      required:
+        - fullName
+        - seatNo
+
+    GatewayBookingRequest:
+      type: object
+      properties:
+        tripId:
+          type: string
+        serviceDate:
+          type: string
+          format: date
+        originStopId:
+          type: string
+        destinationStopId:
+          type: string
+        originSeq:
+          type: integer
+        destinationSeq:
+          type: integer
+        passengers:
+          type: array
+          items:
+            $ref: "#/components/schemas/GatewayPassengerInput"
+        paymentMethod:
+          type: string
+          enum: [qr, ewallet, bank]
+      required:
+        - tripId
+        - serviceDate
+        - originStopId
+        - destinationStopId
+        - originSeq
+        - destinationSeq
+        - passengers
+        - paymentMethod
+
+    GatewayBookingResult:
+      type: object
+      properties:
+        bookingId:
+          type: string
+        externalBookingId:
+          type: string
+          nullable: true
+        operatorId:
+          type: string
+        operatorName:
+          type: string
+        operatorSlug:
+          type: string
+        status:
+          type: string
+        totalAmount:
+          type: string
+        holdExpiresAt:
+          type: string
+          format: date-time
+          nullable: true
+        paymentIntent:
+          type: object
+          nullable: true
+        qrData:
+          type: array
+          nullable: true
+        passengers:
+          type: array
+        tripId:
+          type: string
+      required:
+        - bookingId
+        - operatorId
+        - operatorName
+        - operatorSlug
+        - status
+        - totalAmount
+        - tripId
+
+    GatewayWebhookPayload:
+      type: object
+      properties:
+        providerRef:
+          type: string
+        status:
+          type: string
+          enum: [success, failed]
+      required:
+        - providerRef
+        - status
+
+    GatewayWebhookResult:
+      type: object
+      properties:
+        success:
+          type: boolean
+        bookingId:
+          type: string
+        newStatus:
+          type: string
+      required:
+        - success
+        - bookingId
+        - newStatus

@@ -39,6 +39,7 @@ export const ListOperatorsResponse = zod.object({
       logoUrl: zod.string().nullish(),
       commissionPct: zod.number(),
       primaryColor: zod.string().nullish(),
+      hasWebhookSecret: zod.boolean().optional(),
       createdAt: zod.coerce.date(),
       updatedAt: zod.coerce.date(),
     }),
@@ -62,6 +63,7 @@ export const CreateOperatorBody = zod.object({
   logoUrl: zod.string().nullish(),
   commissionPct: zod.number().default(createOperatorBodyCommissionPctDefault),
   primaryColor: zod.string().nullish(),
+  webhookSecret: zod.string().nullish(),
 });
 
 /**
@@ -81,6 +83,7 @@ export const GetOperatorResponse = zod.object({
   logoUrl: zod.string().nullish(),
   commissionPct: zod.number(),
   primaryColor: zod.string().nullish(),
+  hasWebhookSecret: zod.boolean().optional(),
   createdAt: zod.coerce.date(),
   updatedAt: zod.coerce.date(),
 });
@@ -100,6 +103,7 @@ export const UpdateOperatorBody = zod.object({
   logoUrl: zod.string().nullish(),
   commissionPct: zod.number().optional(),
   primaryColor: zod.string().nullish(),
+  webhookSecret: zod.string().nullish(),
 });
 
 export const UpdateOperatorResponse = zod.object({
@@ -112,6 +116,7 @@ export const UpdateOperatorResponse = zod.object({
   logoUrl: zod.string().nullish(),
   commissionPct: zod.number(),
   primaryColor: zod.string().nullish(),
+  hasWebhookSecret: zod.boolean().optional(),
   createdAt: zod.coerce.date(),
   updatedAt: zod.coerce.date(),
 });
@@ -257,3 +262,158 @@ export const GetRevenueAnalyticsResponseItem = zod.object({
 export const GetRevenueAnalyticsResponse = zod.array(
   GetRevenueAnalyticsResponseItem,
 );
+
+/**
+ * @summary Aggregated trip search across all operators
+ */
+export const GatewaySearchTripsQueryParams = zod.object({
+  originCity: zod.coerce.string(),
+  destinationCity: zod.coerce.string(),
+  date: zod.date(),
+  passengers: zod.coerce.number().optional(),
+});
+
+export const GatewaySearchTripsResponse = zod.object({
+  trips: zod.array(
+    zod.object({
+      tripId: zod.string(),
+      operatorId: zod.string(),
+      operatorName: zod.string(),
+      operatorSlug: zod.string(),
+      operatorLogo: zod.string().nullish(),
+      operatorColor: zod.string().nullish(),
+      serviceDate: zod.coerce.date(),
+      origin: zod.object({
+        stopId: zod.string(),
+        cityName: zod.string(),
+        stopName: zod.string(),
+        sequence: zod.number(),
+        departureTime: zod.string().nullish(),
+        arrivalTime: zod.string().nullish(),
+      }),
+      destination: zod.object({
+        stopId: zod.string(),
+        cityName: zod.string(),
+        stopName: zod.string(),
+        sequence: zod.number(),
+        departureTime: zod.string().nullish(),
+        arrivalTime: zod.string().nullish(),
+      }),
+      farePerPerson: zod.number(),
+      availableSeats: zod.number(),
+      isVirtual: zod.boolean(),
+      vehicleClass: zod.string().nullish(),
+    }),
+  ),
+  errors: zod.array(
+    zod.object({
+      operatorSlug: zod.string().optional(),
+      error: zod.string().optional(),
+    }),
+  ),
+  totalOperators: zod.number(),
+  respondedOperators: zod.number(),
+});
+
+/**
+ * @summary Get trip details from a specific operator
+ */
+export const GatewayGetTripParams = zod.object({
+  tripId: zod.coerce.string(),
+});
+
+export const GatewayGetTripResponse = zod.object({}).passthrough();
+
+/**
+ * @summary Get seatmap from a specific operator terminal
+ */
+export const GatewayGetSeatmapParams = zod.object({
+  tripId: zod.coerce.string(),
+});
+
+export const GatewayGetSeatmapQueryParams = zod.object({
+  originSeq: zod.coerce.number(),
+  destinationSeq: zod.coerce.number(),
+});
+
+export const GatewayGetSeatmapResponse = zod.object({}).passthrough();
+
+/**
+ * @summary Get reviews for a trip
+ */
+export const GatewayGetReviewsParams = zod.object({
+  tripId: zod.coerce.string(),
+});
+
+export const GatewayGetReviewsResponse = zod.object({}).passthrough();
+
+/**
+ * @summary Aggregated cities from all operators
+ */
+export const GatewayGetCitiesResponse = zod.object({
+  cities: zod.array(zod.string()),
+  byOperator: zod.array(
+    zod.object({
+      operatorSlug: zod.string().optional(),
+      cities: zod.array(zod.string()).optional(),
+    }),
+  ),
+});
+
+/**
+ * @summary Get operator brand info from terminal
+ */
+export const GatewayGetOperatorInfoParams = zod.object({
+  operatorSlug: zod.coerce.string(),
+});
+
+export const GatewayGetOperatorInfoResponse = zod.object({}).passthrough();
+
+/**
+ * @summary Aggregated service lines from all operators
+ */
+export const GatewayGetServiceLinesResponse = zod.object({}).passthrough();
+
+/**
+ * @summary Create booking via operator terminal
+ */
+export const GatewayCreateBookingBody = zod.object({
+  tripId: zod.string(),
+  serviceDate: zod.coerce.date(),
+  originStopId: zod.string(),
+  destinationStopId: zod.string(),
+  originSeq: zod.number(),
+  destinationSeq: zod.number(),
+  passengers: zod.array(
+    zod.object({
+      fullName: zod.string(),
+      phone: zod.string().optional(),
+      idNumber: zod.string().optional(),
+      seatNo: zod.string(),
+    }),
+  ),
+  paymentMethod: zod.enum(["qr", "ewallet", "bank"]),
+});
+
+/**
+ * @summary Get booking by ID
+ */
+export const GatewayGetBookingParams = zod.object({
+  bookingId: zod.coerce.string(),
+});
+
+export const GatewayGetBookingResponse = zod.object({}).passthrough();
+
+/**
+ * @summary Forward payment confirmation to operator terminal
+ */
+export const GatewayPaymentWebhookBody = zod.object({
+  providerRef: zod.string(),
+  status: zod.enum(["success", "failed"]),
+});
+
+export const GatewayPaymentWebhookResponse = zod.object({
+  success: zod.boolean(),
+  bookingId: zod.string(),
+  newStatus: zod.string(),
+});

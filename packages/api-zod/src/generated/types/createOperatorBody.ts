@@ -14,4 +14,5 @@ export interface CreateOperatorBody {
   logoUrl?: string | null;
   commissionPct?: number;
   primaryColor?: string | null;
+  webhookSecret?: string | null;
 }

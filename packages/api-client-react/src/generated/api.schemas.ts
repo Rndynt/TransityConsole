@@ -19,6 +19,7 @@ export interface Operator {
   logoUrl?: string | null;
   commissionPct: number;
   primaryColor?: string | null;
+  hasWebhookSecret?: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -31,6 +32,7 @@ export interface CreateOperatorBody {
   logoUrl?: string | null;
   commissionPct?: number;
   primaryColor?: string | null;
+  webhookSecret?: string | null;
 }
 
 export interface UpdateOperatorBody {
@@ -41,6 +43,7 @@ export interface UpdateOperatorBody {
   logoUrl?: string | null;
   commissionPct?: number;
   primaryColor?: string | null;
+  webhookSecret?: string | null;
 }
 
 export interface OperatorListResponse {
@@ -155,6 +158,118 @@ export interface RevenuePeriod {
   bookingCount: number;
 }
 
+export interface GatewayTripStop {
+  stopId: string;
+  cityName: string;
+  stopName: string;
+  sequence: number;
+  departureTime?: string | null;
+  arrivalTime?: string | null;
+}
+
+export interface GatewayTrip {
+  tripId: string;
+  operatorId: string;
+  operatorName: string;
+  operatorSlug: string;
+  operatorLogo?: string | null;
+  operatorColor?: string | null;
+  serviceDate: string;
+  origin: GatewayTripStop;
+  destination: GatewayTripStop;
+  farePerPerson: number;
+  availableSeats: number;
+  isVirtual: boolean;
+  vehicleClass?: string | null;
+}
+
+export type GatewaySearchResultErrorsItem = {
+  operatorSlug?: string;
+  error?: string;
+};
+
+export interface GatewaySearchResult {
+  trips: GatewayTrip[];
+  errors: GatewaySearchResultErrorsItem[];
+  totalOperators: number;
+  respondedOperators: number;
+}
+
+export type GatewayCitiesResultByOperatorItem = {
+  operatorSlug?: string;
+  cities?: string[];
+};
+
+export interface GatewayCitiesResult {
+  cities: string[];
+  byOperator: GatewayCitiesResultByOperatorItem[];
+}
+
+export interface GatewayPassengerInput {
+  fullName: string;
+  phone?: string;
+  idNumber?: string;
+  seatNo: string;
+}
+
+export type GatewayBookingRequestPaymentMethod =
+  (typeof GatewayBookingRequestPaymentMethod)[keyof typeof GatewayBookingRequestPaymentMethod];
+
+export const GatewayBookingRequestPaymentMethod = {
+  qr: "qr",
+  ewallet: "ewallet",
+  bank: "bank",
+} as const;
+
+export interface GatewayBookingRequest {
+  tripId: string;
+  serviceDate: string;
+  originStopId: string;
+  destinationStopId: string;
+  originSeq: number;
+  destinationSeq: number;
+  passengers: GatewayPassengerInput[];
+  paymentMethod: GatewayBookingRequestPaymentMethod;
+}
+
+export type GatewayBookingResultPaymentIntent = {
+  [key: string]: unknown;
+} | null;
+
+export interface GatewayBookingResult {
+  bookingId: string;
+  externalBookingId?: string | null;
+  operatorId: string;
+  operatorName: string;
+  operatorSlug: string;
+  status: string;
+  totalAmount: string;
+  holdExpiresAt?: string | null;
+  paymentIntent?: GatewayBookingResultPaymentIntent;
+  qrData?: unknown[] | null;
+  passengers?: unknown[];
+  tripId: string;
+}
+
+export type GatewayWebhookPayloadStatus =
+  (typeof GatewayWebhookPayloadStatus)[keyof typeof GatewayWebhookPayloadStatus];
+
+export const GatewayWebhookPayloadStatus = {
+  success: "success",
+  failed: "failed",
+} as const;
+
+export interface GatewayWebhookPayload {
+  providerRef: string;
+  status: GatewayWebhookPayloadStatus;
+}
+
+export interface GatewayWebhookResult {
+  success: boolean;
+  bookingId: string;
+  newStatus: string;
+}
+
 export type ListOperatorsParams = {
   active?: boolean;
   page?: number;
@@ -205,3 +320,27 @@ export const GetRevenueAnalyticsPeriod = {
   "30d": "30d",
   "90d": "90d",
 } as const;
+
+export type GatewaySearchTripsParams = {
+  originCity: string;
+  destinationCity: string;
+  date: string;
+  passengers?: number;
+};
+
+export type GatewayGetTrip200 = { [key: string]: unknown };
+
+export type GatewayGetSeatmapParams = {
+  originSeq: number;
+  destinationSeq: number;
+};
+
+export type GatewayGetSeatmap200 = { [key: string]: unknown };
+
+export type GatewayGetReviews200 = { [key: string]: unknown };
+
+export type GatewayGetOperatorInfo200 = { [key: string]: unknown };
+
+export type GatewayGetServiceLines200 = { [key: string]: unknown };
+
+export type GatewayGetBooking200 = { [key: string]: unknown };

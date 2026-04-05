@@ -16,6 +16,7 @@ export interface Operator {
   logoUrl?: string | null;
   commissionPct: number;
   primaryColor?: string | null;
+  hasWebhookSecret?: boolean;
   createdAt: Date;
   updatedAt: Date;
 }

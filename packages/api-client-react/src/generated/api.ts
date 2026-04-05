@@ -20,6 +20,20 @@ import type {
   AnalyticsSummary,
   BookingListResponse,
   CreateOperatorBody,
+  GatewayBookingRequest,
+  GatewayBookingResult,
+  GatewayCitiesResult,
+  GatewayGetBooking200,
+  GatewayGetOperatorInfo200,
+  GatewayGetReviews200,
+  GatewayGetSeatmap200,
+  GatewayGetSeatmapParams,
+  GatewayGetServiceLines200,
+  GatewayGetTrip200,
+  GatewaySearchResult,
+  GatewaySearchTripsParams,
+  GatewayWebhookPayload,
+  GatewayWebhookResult,
   GetOperatorAnalyticsParams,
   GetRevenueAnalyticsParams,
   HealthStatus,
@@ -1084,3 +1098,905 @@ export function useGetRevenueAnalytics<
 
   return { ...query, queryKey: queryOptions.queryKey };
 }
+
+/**
+ * @summary Aggregated trip search across all operators
+ */
+export const getGatewaySearchTripsUrl = (params: GatewaySearchTripsParams) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/gateway/trips/search?${stringifiedParams}`
+    : `/api/gateway/trips/search`;
+};
+
+export const gatewaySearchTrips = async (
+  params: GatewaySearchTripsParams,
+  options?: RequestInit,
+): Promise<GatewaySearchResult> => {
+  return customFetch<GatewaySearchResult>(getGatewaySearchTripsUrl(params), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGatewaySearchTripsQueryKey = (
+  params?: GatewaySearchTripsParams,
+) => {
+  return [`/api/gateway/trips/search`, ...(params ? [params] : [])] as const;
+};
+
+export const getGatewaySearchTripsQueryOptions = <
+  TData = Awaited<ReturnType<typeof gatewaySearchTrips>>,
+  TError = ErrorType<unknown>,
+>(
+  params: GatewaySearchTripsParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof gatewaySearchTrips>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getGatewaySearchTripsQueryKey(params);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof gatewaySearchTrips>>
+  > = ({ signal }) => gatewaySearchTrips(params, { signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof gatewaySearchTrips>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GatewaySearchTripsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof gatewaySearchTrips>>
+>;
+export type GatewaySearchTripsQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Aggregated trip search across all operators
+ */
+
+export function useGatewaySearchTrips<
+  TData = Awaited<ReturnType<typeof gatewaySearchTrips>>,
+  TError = ErrorType<unknown>,
+>(
+  params: GatewaySearchTripsParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof gatewaySearchTrips>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGatewaySearchTripsQueryOptions(params, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Get trip details from a specific operator
+ */
+export const getGatewayGetTripUrl = (tripId: string) => {
+  return `/api/gateway/trips/${tripId}`;
+};
+
+export const gatewayGetTrip = async (
+  tripId: string,
+  options?: RequestInit,
+): Promise<GatewayGetTrip200> => {
+  return customFetch<GatewayGetTrip200>(getGatewayGetTripUrl(tripId), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGatewayGetTripQueryKey = (tripId: string) => {
+  return [`/api/gateway/trips/${tripId}`] as const;
+};
+
+export const getGatewayGetTripQueryOptions = <
+  TData = Awaited<ReturnType<typeof gatewayGetTrip>>,
+  TError = ErrorType<void>,
+>(
+  tripId: string,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof gatewayGetTrip>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getGatewayGetTripQueryKey(tripId);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof gatewayGetTrip>>> = ({
+    signal,
+  }) => gatewayGetTrip(tripId, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!tripId,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof gatewayGetTrip>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GatewayGetTripQueryResult = NonNullable<
+  Awaited<ReturnType<typeof gatewayGetTrip>>
+>;
+export type GatewayGetTripQueryError = ErrorType<void>;
+
+/**
+ * @summary Get trip details from a specific operator
+ */
+
+export function useGatewayGetTrip<
+  TData = Awaited<ReturnType<typeof gatewayGetTrip>>,
+  TError = ErrorType<void>,
+>(
+  tripId: string,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof gatewayGetTrip>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGatewayGetTripQueryOptions(tripId, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Get seatmap from a specific operator terminal
+ */
+export const getGatewayGetSeatmapUrl = (
+  tripId: string,
+  params: GatewayGetSeatmapParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/gateway/trips/${tripId}/seatmap?${stringifiedParams}`
+    : `/api/gateway/trips/${tripId}/seatmap`;
+};
+
+export const gatewayGetSeatmap = async (
+  tripId: string,
+  params: GatewayGetSeatmapParams,
+  options?: RequestInit,
+): Promise<GatewayGetSeatmap200> => {
+  return customFetch<GatewayGetSeatmap200>(
+    getGatewayGetSeatmapUrl(tripId, params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export const getGatewayGetSeatmapQueryKey = (
+  tripId: string,
+  params?: GatewayGetSeatmapParams,
+) => {
+  return [
+    `/api/gateway/trips/${tripId}/seatmap`,
+    ...(params ? [params] : []),
+  ] as const;
+};
+
+export const getGatewayGetSeatmapQueryOptions = <
+  TData = Awaited<ReturnType<typeof gatewayGetSeatmap>>,
+  TError = ErrorType<void>,
+>(
+  tripId: string,
+  params: GatewayGetSeatmapParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof gatewayGetSeatmap>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getGatewayGetSeatmapQueryKey(tripId, params);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof gatewayGetSeatmap>>
+  > = ({ signal }) =>
+    gatewayGetSeatmap(tripId, params, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!tripId,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof gatewayGetSeatmap>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GatewayGetSeatmapQueryResult = NonNullable<
+  Awaited<ReturnType<typeof gatewayGetSeatmap>>
+>;
+export type GatewayGetSeatmapQueryError = ErrorType<void>;
+
+/**
+ * @summary Get seatmap from a specific operator terminal
+ */
+
+export function useGatewayGetSeatmap<
+  TData = Awaited<ReturnType<typeof gatewayGetSeatmap>>,
+  TError = ErrorType<void>,
+>(
+  tripId: string,
+  params: GatewayGetSeatmapParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof gatewayGetSeatmap>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGatewayGetSeatmapQueryOptions(
+    tripId,
+    params,
+    options,
+  );
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Get reviews for a trip
+ */
+export const getGatewayGetReviewsUrl = (tripId: string) => {
+  return `/api/gateway/trips/${tripId}/reviews`;
+};
+
+export const gatewayGetReviews = async (
+  tripId: string,
+  options?: RequestInit,
+): Promise<GatewayGetReviews200> => {
+  return customFetch<GatewayGetReviews200>(getGatewayGetReviewsUrl(tripId), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGatewayGetReviewsQueryKey = (tripId: string) => {
+  return [`/api/gateway/trips/${tripId}/reviews`] as const;
+};
+
+export const getGatewayGetReviewsQueryOptions = <
+  TData = Awaited<ReturnType<typeof gatewayGetReviews>>,
+  TError = ErrorType<void>,
+>(
+  tripId: string,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof gatewayGetReviews>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getGatewayGetReviewsQueryKey(tripId);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof gatewayGetReviews>>
+  > = ({ signal }) => gatewayGetReviews(tripId, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!tripId,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof gatewayGetReviews>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GatewayGetReviewsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof gatewayGetReviews>>
+>;
+export type GatewayGetReviewsQueryError = ErrorType<void>;
+
+/**
+ * @summary Get reviews for a trip
+ */
+
+export function useGatewayGetReviews<
+  TData = Awaited<ReturnType<typeof gatewayGetReviews>>,
+  TError = ErrorType<void>,
+>(
+  tripId: string,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof gatewayGetReviews>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGatewayGetReviewsQueryOptions(tripId, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Aggregated cities from all operators
+ */
+export const getGatewayGetCitiesUrl = () => {
+  return `/api/gateway/cities`;
+};
+
+export const gatewayGetCities = async (
+  options?: RequestInit,
+): Promise<GatewayCitiesResult> => {
+  return customFetch<GatewayCitiesResult>(getGatewayGetCitiesUrl(), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGatewayGetCitiesQueryKey = () => {
+  return [`/api/gateway/cities`] as const;
+};
+
+export const getGatewayGetCitiesQueryOptions = <
+  TData = Awaited<ReturnType<typeof gatewayGetCities>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof gatewayGetCities>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getGatewayGetCitiesQueryKey();
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof gatewayGetCities>>
+  > = ({ signal }) => gatewayGetCities({ signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof gatewayGetCities>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GatewayGetCitiesQueryResult = NonNullable<
+  Awaited<ReturnType<typeof gatewayGetCities>>
+>;
+export type GatewayGetCitiesQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Aggregated cities from all operators
+ */
+
+export function useGatewayGetCities<
+  TData = Awaited<ReturnType<typeof gatewayGetCities>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof gatewayGetCities>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGatewayGetCitiesQueryOptions(options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Get operator brand info from terminal
+ */
+export const getGatewayGetOperatorInfoUrl = (operatorSlug: string) => {
+  return `/api/gateway/operators/${operatorSlug}/info`;
+};
+
+export const gatewayGetOperatorInfo = async (
+  operatorSlug: string,
+  options?: RequestInit,
+): Promise<GatewayGetOperatorInfo200> => {
+  return customFetch<GatewayGetOperatorInfo200>(
+    getGatewayGetOperatorInfoUrl(operatorSlug),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export const getGatewayGetOperatorInfoQueryKey = (operatorSlug: string) => {
+  return [`/api/gateway/operators/${operatorSlug}/info`] as const;
+};
+
+export const getGatewayGetOperatorInfoQueryOptions = <
+  TData = Awaited<ReturnType<typeof gatewayGetOperatorInfo>>,
+  TError = ErrorType<void>,
+>(
+  operatorSlug: string,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof gatewayGetOperatorInfo>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getGatewayGetOperatorInfoQueryKey(operatorSlug);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof gatewayGetOperatorInfo>>
+  > = ({ signal }) =>
+    gatewayGetOperatorInfo(operatorSlug, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!operatorSlug,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof gatewayGetOperatorInfo>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GatewayGetOperatorInfoQueryResult = NonNullable<
+  Awaited<ReturnType<typeof gatewayGetOperatorInfo>>
+>;
+export type GatewayGetOperatorInfoQueryError = ErrorType<void>;
+
+/**
+ * @summary Get operator brand info from terminal
+ */
+
+export function useGatewayGetOperatorInfo<
+  TData = Awaited<ReturnType<typeof gatewayGetOperatorInfo>>,
+  TError = ErrorType<void>,
+>(
+  operatorSlug: string,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof gatewayGetOperatorInfo>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGatewayGetOperatorInfoQueryOptions(
+    operatorSlug,
+    options,
+  );
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Aggregated service lines from all operators
+ */
+export const getGatewayGetServiceLinesUrl = () => {
+  return `/api/gateway/service-lines`;
+};
+
+export const gatewayGetServiceLines = async (
+  options?: RequestInit,
+): Promise<GatewayGetServiceLines200> => {
+  return customFetch<GatewayGetServiceLines200>(
+    getGatewayGetServiceLinesUrl(),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export const getGatewayGetServiceLinesQueryKey = () => {
+  return [`/api/gateway/service-lines`] as const;
+};
+
+export const getGatewayGetServiceLinesQueryOptions = <
+  TData = Awaited<ReturnType<typeof gatewayGetServiceLines>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof gatewayGetServiceLines>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getGatewayGetServiceLinesQueryKey();
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof gatewayGetServiceLines>>
+  > = ({ signal }) => gatewayGetServiceLines({ signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof gatewayGetServiceLines>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GatewayGetServiceLinesQueryResult = NonNullable<
+  Awaited<ReturnType<typeof gatewayGetServiceLines>>
+>;
+export type GatewayGetServiceLinesQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Aggregated service lines from all operators
+ */
+
+export function useGatewayGetServiceLines<
+  TData = Awaited<ReturnType<typeof gatewayGetServiceLines>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof gatewayGetServiceLines>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGatewayGetServiceLinesQueryOptions(options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Create booking via operator terminal
+ */
+export const getGatewayCreateBookingUrl = () => {
+  return `/api/gateway/bookings`;
+};
+
+export const gatewayCreateBooking = async (
+  gatewayBookingRequest: GatewayBookingRequest,
+  options?: RequestInit,
+): Promise<GatewayBookingResult> => {
+  return customFetch<GatewayBookingResult>(getGatewayCreateBookingUrl(), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(gatewayBookingRequest),
+  });
+};
+
+export const getGatewayCreateBookingMutationOptions = <
+  TError = ErrorType<void>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof gatewayCreateBooking>>,
+    TError,
+    { data: BodyType<GatewayBookingRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof gatewayCreateBooking>>,
+  TError,
+  { data: BodyType<GatewayBookingRequest> },
+  TContext
+> => {
+  const mutationKey = ["gatewayCreateBooking"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof gatewayCreateBooking>>,
+    { data: BodyType<GatewayBookingRequest> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return gatewayCreateBooking(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type GatewayCreateBookingMutationResult = NonNullable<
+  Awaited<ReturnType<typeof gatewayCreateBooking>>
+>;
+export type GatewayCreateBookingMutationBody = BodyType<GatewayBookingRequest>;
+export type GatewayCreateBookingMutationError = ErrorType<void>;
+
+/**
+ * @summary Create booking via operator terminal
+ */
+export const useGatewayCreateBooking = <
+  TError = ErrorType<void>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof gatewayCreateBooking>>,
+    TError,
+    { data: BodyType<GatewayBookingRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof gatewayCreateBooking>>,
+  TError,
+  { data: BodyType<GatewayBookingRequest> },
+  TContext
+> => {
+  return useMutation(getGatewayCreateBookingMutationOptions(options));
+};
+
+/**
+ * @summary Get booking by ID
+ */
+export const getGatewayGetBookingUrl = (bookingId: string) => {
+  return `/api/gateway/bookings/${bookingId}`;
+};
+
+export const gatewayGetBooking = async (
+  bookingId: string,
+  options?: RequestInit,
+): Promise<GatewayGetBooking200> => {
+  return customFetch<GatewayGetBooking200>(getGatewayGetBookingUrl(bookingId), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGatewayGetBookingQueryKey = (bookingId: string) => {
+  return [`/api/gateway/bookings/${bookingId}`] as const;
+};
+
+export const getGatewayGetBookingQueryOptions = <
+  TData = Awaited<ReturnType<typeof gatewayGetBooking>>,
+  TError = ErrorType<void>,
+>(
+  bookingId: string,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof gatewayGetBooking>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getGatewayGetBookingQueryKey(bookingId);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof gatewayGetBooking>>
+  > = ({ signal }) =>
+    gatewayGetBooking(bookingId, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!bookingId,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof gatewayGetBooking>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GatewayGetBookingQueryResult = NonNullable<
+  Awaited<ReturnType<typeof gatewayGetBooking>>
+>;
+export type GatewayGetBookingQueryError = ErrorType<void>;
+
+/**
+ * @summary Get booking by ID
+ */
+
+export function useGatewayGetBooking<
+  TData = Awaited<ReturnType<typeof gatewayGetBooking>>,
+  TError = ErrorType<void>,
+>(
+  bookingId: string,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof gatewayGetBooking>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGatewayGetBookingQueryOptions(bookingId, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Forward payment confirmation to operator terminal
+ */
+export const getGatewayPaymentWebhookUrl = () => {
+  return `/api/gateway/payments/webhook`;
+};
+
+export const gatewayPaymentWebhook = async (
+  gatewayWebhookPayload: GatewayWebhookPayload,
+  options?: RequestInit,
+): Promise<GatewayWebhookResult> => {
+  return customFetch<GatewayWebhookResult>(getGatewayPaymentWebhookUrl(), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(gatewayWebhookPayload),
+  });
+};
+
+export const getGatewayPaymentWebhookMutationOptions = <
+  TError = ErrorType<void>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof gatewayPaymentWebhook>>,
+    TError,
+    { data: BodyType<GatewayWebhookPayload> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof gatewayPaymentWebhook>>,
+  TError,
+  { data: BodyType<GatewayWebhookPayload> },
+  TContext
+> => {
+  const mutationKey = ["gatewayPaymentWebhook"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof gatewayPaymentWebhook>>,
+    { data: BodyType<GatewayWebhookPayload> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return gatewayPaymentWebhook(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type GatewayPaymentWebhookMutationResult = NonNullable<
+  Awaited<ReturnType<typeof gatewayPaymentWebhook>>
+>;
+export type GatewayPaymentWebhookMutationBody = BodyType<GatewayWebhookPayload>;
+export type GatewayPaymentWebhookMutationError = ErrorType<void>;
+
+/**
+ * @summary Forward payment confirmation to operator terminal
+ */
+export const useGatewayPaymentWebhook = <
+  TError = ErrorType<void>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof gatewayPaymentWebhook>>,
+    TError,
+    { data: BodyType<GatewayWebhookPayload> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof gatewayPaymentWebhook>>,
+  TError,
+  { data: BodyType<GatewayWebhookPayload> },
+  TContext
+> => {
+  return useMutation(getGatewayPaymentWebhookMutationOptions(options));
+};

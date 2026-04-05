@@ -40,6 +40,11 @@ export async function findById(id: string): Promise<Booking | null> {
   return row ?? null;
 }
 
+export async function findByProviderRef(providerRef: string): Promise<Booking | null> {
+  const [row] = await db.select().from(bookingsTable).where(eq(bookingsTable.providerRef, providerRef));
+  return row ?? null;
+}
+
 export async function create(data: {
   operatorId: string;
   operatorName: string;
@@ -54,7 +59,19 @@ export async function create(data: {
   commissionAmount: string;
   externalBookingId: string | null;
   status: string;
+  providerRef?: string | null;
+  holdExpiresAt?: Date | null;
+  paymentMethod?: string | null;
+  passengersJson?: string | null;
+  originStopId?: string | null;
+  destinationStopId?: string | null;
+  serviceDate?: string | null;
 }): Promise<Booking> {
   const [row] = await db.insert(bookingsTable).values(data).returning();
   return row;
+}
+
+export async function updateStatus(id: string, status: string): Promise<Booking | null> {
+  const [row] = await db.update(bookingsTable).set({ status }).where(eq(bookingsTable.id, id)).returning();
+  return row ?? null;
 }

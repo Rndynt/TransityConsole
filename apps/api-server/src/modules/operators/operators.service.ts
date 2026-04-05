@@ -18,6 +18,7 @@ export function formatOperator(op: repo.Operator) {
     logoUrl: op.logoUrl ?? null,
     commissionPct: parseFloat(String(op.commissionPct)),
     primaryColor: op.primaryColor ?? null,
+    hasWebhookSecret: !!op.webhookSecret,
     createdAt: op.createdAt.toISOString(),
     updatedAt: op.updatedAt.toISOString(),
   };
@@ -52,6 +53,7 @@ export async function create(data: {
   logoUrl?: string | null;
   commissionPct?: number;
   primaryColor?: string | null;
+  webhookSecret?: string | null;
 }) {
   const op = await repo.create({
     name: data.name,
@@ -61,6 +63,7 @@ export async function create(data: {
     logoUrl: data.logoUrl ?? null,
     commissionPct: String(data.commissionPct ?? 0),
     primaryColor: data.primaryColor ?? null,
+    webhookSecret: data.webhookSecret ?? null,
     active: true,
   });
   return formatOperator(op);
@@ -76,6 +79,7 @@ export async function update(
     logoUrl?: string | null;
     commissionPct?: number;
     primaryColor?: string | null;
+    webhookSecret?: string | null;
   }
 ) {
   const updates: Record<string, unknown> = {};
@@ -86,6 +90,7 @@ export async function update(
   if (data.logoUrl !== undefined) updates.logoUrl = data.logoUrl;
   if (data.commissionPct !== undefined) updates.commissionPct = String(data.commissionPct);
   if (data.primaryColor !== undefined) updates.primaryColor = data.primaryColor;
+  if (data.webhookSecret !== undefined) updates.webhookSecret = data.webhookSecret;
 
   const op = await repo.update(id, updates);
   if (!op) throw new NotFoundError("Operator not found");

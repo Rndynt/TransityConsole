@@ -26,7 +26,19 @@ Internal admin dashboard for the Transity ecosystem (Indonesian shuttle industry
 
 **Backend routes**: `/api/operators` (CRUD + ping), `/api/terminals/health`, `/api/bookings`, `/api/analytics/*`, `/api/auth/*`, `/api/gateway/*`
 
-**Database tables**: `operators`, `terminal_health`, `bookings`, `admin_users`, `api_keys`
+**Gateway endpoints** (TransityTerminal integration):
+- `GET /api/gateway/trips/search?originCity=&destinationCity=&date=&passengers=` — aggregated trip search
+- `GET /api/gateway/trips/:tripId` — trip detail (tripId format: `operatorSlug:originalId`)
+- `GET /api/gateway/trips/:tripId/seatmap?originSeq=&destinationSeq=` — seatmap proxy
+- `GET /api/gateway/trips/:tripId/reviews` — trip reviews proxy
+- `GET /api/gateway/cities` — aggregated cities from all operators
+- `GET /api/gateway/operators/:operatorSlug/info` — operator brand info
+- `GET /api/gateway/service-lines` — aggregated service lines
+- `POST /api/gateway/bookings` — create booking (multi-passenger, with serviceDate, stops, seatNo)
+- `GET /api/gateway/bookings/:bookingId` — get booking by ID
+- `POST /api/gateway/payments/webhook` — forward payment webhook to terminal (HMAC-SHA256 signed)
+
+**Database tables**: `operators` (+ `webhookSecret`), `terminal_health`, `bookings` (+ `providerRef`, `holdExpiresAt`, `paymentMethod`, `passengersJson`, `originStopId`, `destinationStopId`, `serviceDate`), `admin_users`, `api_keys`
 
 ## Structure
 

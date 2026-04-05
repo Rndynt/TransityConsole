@@ -16,7 +16,14 @@ export const bookingsTable = pgTable("bookings", {
   totalAmount: numeric("total_amount", { precision: 12, scale: 2 }).notNull().default("0"),
   commissionAmount: numeric("commission_amount", { precision: 12, scale: 2 }).notNull().default("0"),
   externalBookingId: text("external_booking_id"),
-  status: text("status").notNull().default("pending"), // pending | confirmed | cancelled | completed
+  status: text("status").notNull().default("pending"),
+  providerRef: text("provider_ref"),
+  holdExpiresAt: timestamp("hold_expires_at", { withTimezone: true }),
+  paymentMethod: text("payment_method"),
+  passengersJson: text("passengers_json"),
+  originStopId: text("origin_stop_id"),
+  destinationStopId: text("destination_stop_id"),
+  serviceDate: date("service_date"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
