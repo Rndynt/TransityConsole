@@ -386,6 +386,56 @@ async function fetchTripsFromTerminal(operator: OperatorRow, params: TripSearchP
   return (trips as Array<Record<string, unknown>>).map((t) => mapTrip(operator, t));
 }
 
+function deduplicateTrips(trips: TerminalTrip[]): TerminalTrip[] {
+  const virtualTrips = new Map<string, TerminalTrip>();
+  const realTrips = new Map<string, TerminalTrip>();
+
+  for (const trip of trips) {
+    const rawId = trip.tripId.includes(":") ? trip.tripId.split(":").slice(1).join(":") : trip.tripId;
+
+    if (rawId.startsWith("virtual-")) {
+      const baseId = rawId.replace(/^virtual-/, "");
+      const dedupeKey = `${trip.operatorSlug}:${baseId}:${trip.serviceDate}`;
+      virtualTrips.set(dedupeKey, trip);
+    } else {
+      const raw = trip.raw;
+      const baseScheduleId = raw?.["baseScheduleId"] ?? raw?.["baseId"] ?? raw?.["scheduleId"];
+      if (baseScheduleId) {
+        const dedupeKey = `${trip.operatorSlug}:${String(baseScheduleId)}:${trip.serviceDate}`;
+        const existingVirtual = virtualTrips.get(dedupeKey);
+        if (existingVirtual) {
+          if (trip.availableSeats === 0 && existingVirtual.availableSeats > 0) {
+            trip.availableSeats = existingVirtual.availableSeats;
+          }
+          virtualTrips.delete(dedupeKey);
+        }
+      }
+      const realKey = `${trip.operatorSlug}:${rawId}`;
+      if (!realTrips.has(realKey)) {
+        realTrips.set(realKey, trip);
+      }
+    }
+  }
+
+  const materializedBaseIds = new Set<string>();
+  for (const trip of realTrips.values()) {
+    const raw = trip.raw;
+    const baseScheduleId = raw?.["baseScheduleId"] ?? raw?.["baseId"] ?? raw?.["scheduleId"];
+    if (baseScheduleId) {
+      materializedBaseIds.add(`${trip.operatorSlug}:${String(baseScheduleId)}:${trip.serviceDate}`);
+    }
+  }
+
+  const result: TerminalTrip[] = [...realTrips.values()];
+  for (const [key, vTrip] of virtualTrips) {
+    if (!materializedBaseIds.has(key)) {
+      result.push(vTrip);
+    }
+  }
+
+  return result;
+}
+
 export async function searchTrips(params: TripSearchParams): Promise<SearchResult> {
   const searchKey = `${params.originCity}|${params.destinationCity}|${params.date}|${params.passengers ?? ""}`;
   const cached = getCached(cache.search.get(searchKey));
@@ -399,10 +449,10 @@ export async function searchTrips(params: TripSearchParams): Promise<SearchResul
     operators.map((op) => limit(() => fetchTripsFromTerminal(op, params)))
   );
 
-  const trips: TerminalTrip[] = [];
+  const rawTrips: TerminalTrip[] = [];
   settled.forEach((result, i) => {
     if (result.status === "fulfilled") {
-      trips.push(...result.value);
+      rawTrips.push(...result.value);
     } else {
       const op = operators[i];
       errors.push({
@@ -411,6 +461,8 @@ export async function searchTrips(params: TripSearchParams): Promise<SearchResul
       });
     }
   });
+
+  const trips = deduplicateTrips(rawTrips);
 
   for (const trip of trips) {
     cache.tripContext.set(trip.tripId, {
