@@ -1,9 +1,11 @@
-FROM node:22-alpine AS base
+# Use Debian-based node for full libc compatibility with native modules
+FROM node:22 AS base
 RUN corepack enable && corepack prepare pnpm@10 --activate
 WORKDIR /app
 
 FROM base AS installer
 COPY package.json pnpm-workspace.yaml pnpm-lock.yaml .npmrc ./
+COPY tsconfig.base.json ./tsconfig.base.json
 COPY apps/api-server/package.json ./apps/api-server/
 COPY apps/transity-console/package.json ./apps/transity-console/
 COPY packages/api-client-react/package.json ./packages/api-client-react/
@@ -13,6 +15,7 @@ COPY packages/db/package.json ./packages/db/
 RUN pnpm install --frozen-lockfile
 
 FROM installer AS frontend-builder
+COPY tsconfig.base.json ./tsconfig.base.json
 COPY apps/transity-console ./apps/transity-console
 COPY packages ./packages
 ENV PORT=3000
@@ -20,6 +23,7 @@ ENV BASE_PATH=/
 RUN pnpm --filter @workspace/transity-console run build
 
 FROM installer AS api-builder
+COPY tsconfig.base.json ./tsconfig.base.json
 COPY apps/api-server ./apps/api-server
 COPY packages ./packages
 RUN pnpm --filter @workspace/api-server run build
@@ -28,6 +32,7 @@ FROM base AS production
 WORKDIR /app
 
 COPY package.json pnpm-workspace.yaml pnpm-lock.yaml .npmrc ./
+COPY tsconfig.base.json ./tsconfig.base.json
 COPY apps/api-server/package.json ./apps/api-server/
 COPY packages/api-client-react/package.json ./packages/api-client-react/
 COPY packages/api-spec/package.json ./packages/api-spec/
