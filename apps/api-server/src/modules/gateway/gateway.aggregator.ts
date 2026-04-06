@@ -17,11 +17,17 @@ interface CacheEntry<T> {
   expiresAt: number;
 }
 
+interface CityEntry {
+  city: string;
+  stopCount: number;
+  operators: string[];
+}
+
 const cache = {
   search: new Map<string, CacheEntry<SearchResult>>(),
   tripContext: new Map<string, { originCity: string; destCity: string; serviceDate: string }>(),
   seatmap: new Map<string, CacheEntry<Record<string, unknown>>>(),
-  cities: null as CacheEntry<{ cities: string[]; byOperator: Array<{ operatorSlug: string; cities: string[] }> }> | null,
+  cities: null as CacheEntry<{ cities: CityEntry[]; byOperator: Array<{ operatorSlug: string; cities: Array<{ city: string; stopCount: number }> }> }> | null,
   serviceLines: null as CacheEntry<{ serviceLines: Array<Record<string, unknown>>; byOperator: Array<{ operatorSlug: string; serviceLines: Array<Record<string, unknown>> }> }> | null,
   operatorInfo: new Map<string, CacheEntry<Record<string, unknown>>>(),
   materializedIds: new Map<string, string>(),
@@ -628,14 +634,14 @@ export function invalidateSeatmapCache(tripId: string): void {
   cache.search.clear();
 }
 
-export async function getCities(): Promise<{ cities: string[]; byOperator: Array<{ operatorSlug: string; cities: string[] }> }> {
+export async function getCities(): Promise<{ cities: CityEntry[]; byOperator: Array<{ operatorSlug: string; cities: Array<{ city: string; stopCount: number }> }> }> {
   const cached = getCached(cache.cities);
   if (cached) return cached;
 
   const { rows: operators } = await operatorsRepo.findAll({ active: true }, { limit: 100, offset: 0 });
   const limit = pLimit(MAX_CONCURRENT);
-  const allCities = new Set<string>();
-  const byOperator: Array<{ operatorSlug: string; cities: string[] }> = [];
+  const cityMap = new Map<string, { stopCount: number; operators: Set<string> }>();
+  const byOperator: Array<{ operatorSlug: string; cities: Array<{ city: string; stopCount: number }> }> = [];
 
   await Promise.allSettled(
     operators.map((op) =>
@@ -646,17 +652,48 @@ export async function getCities(): Promise<{ cities: string[]; byOperator: Array
             headers: { "X-Service-Key": op.serviceKey },
           });
           if (!res.ok) return;
-          const body = (await res.json()) as { data?: string[]; cities?: string[] } | string[];
-          const cities = Array.isArray(body) ? body : ((body as Record<string, unknown>).data ?? (body as Record<string, unknown>).cities ?? []) as string[];
-          cities.forEach((c) => allCities.add(c));
-          byOperator.push({ operatorSlug: op.slug, cities });
+          const body = (await res.json()) as Record<string, unknown>;
+          const rawCities = (Array.isArray(body) ? body : (body.data ?? body.cities ?? [])) as unknown[];
+          const opCities: Array<{ city: string; stopCount: number }> = [];
+
+          for (const c of rawCities) {
+            let cityName: string;
+            let stopCount: number;
+            if (typeof c === "string") {
+              cityName = c;
+              stopCount = 0;
+            } else if (c && typeof c === "object") {
+              const obj = c as Record<string, unknown>;
+              cityName = String(obj["city"] ?? obj["name"] ?? "");
+              stopCount = Number(obj["stopCount"] ?? obj["stop_count"] ?? 0);
+            } else {
+              continue;
+            }
+            if (!cityName) continue;
+
+            opCities.push({ city: cityName, stopCount });
+
+            const existing = cityMap.get(cityName);
+            if (existing) {
+              existing.stopCount = Math.max(existing.stopCount, stopCount);
+              existing.operators.add(op.slug);
+            } else {
+              cityMap.set(cityName, { stopCount, operators: new Set([op.slug]) });
+            }
+          }
+
+          byOperator.push({ operatorSlug: op.slug, cities: opCities });
         } catch {
         }
       })
     )
   );
 
-  const result = { cities: Array.from(allCities).sort(), byOperator };
+  const cities: CityEntry[] = Array.from(cityMap.entries())
+    .map(([city, info]) => ({ city, stopCount: info.stopCount, operators: Array.from(info.operators) }))
+    .sort((a, b) => a.city.localeCompare(b.city));
+
+  const result = { cities, byOperator };
   cache.cities = { data: result, expiresAt: Date.now() + CACHE_TTL.CITIES };
   return result;
 }
