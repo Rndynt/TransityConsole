@@ -230,6 +230,53 @@ export async function materializeTripPublic(
   }
 }
 
+export async function materializeByBaseId(
+  baseId: string,
+  serviceDate: string
+): Promise<{ materializedTripId: string; operatorSlug: string } | null> {
+  if (!serviceDate) {
+    throw new GatewayError("Parameter serviceDate wajib diisi.", 400, "MISSING_SERVICE_DATE");
+  }
+
+  const { rows: operators } = await operatorsRepo.findAll({ active: true }, { limit: 100, offset: 0 });
+  const limit = pLimit(MAX_CONCURRENT);
+  const virtualId = `virtual-${baseId}`;
+
+  const results = await Promise.allSettled(
+    operators.map((op) =>
+      limit(async () => {
+        const realId = await materializeTrip(op, virtualId, serviceDate);
+        return { materializedTripId: realId, operatorSlug: op.slug };
+      })
+    )
+  );
+
+  for (const r of results) {
+    if (r.status === "fulfilled") {
+      return r.value;
+    }
+  }
+
+  const cachedKey = `tripContext:baseId:${baseId}`;
+  for (const [key, ctx] of cache.tripContext) {
+    if (key.includes(baseId)) {
+      const slug = key.split(":")[0];
+      if (slug) {
+        const op = operators.find((o) => o.slug === slug);
+        if (op) {
+          try {
+            const realId = await materializeTrip(op, virtualId, serviceDate);
+            return { materializedTripId: realId, operatorSlug: slug };
+          } catch {
+          }
+        }
+      }
+    }
+  }
+
+  return null;
+}
+
 async function materializeTrip(
   operator: OperatorRow,
   virtualId: string,
