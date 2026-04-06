@@ -71,6 +71,20 @@ const gatewayRoutes: FastifyPluginAsync = async (fastify) => {
     }
   });
 
+  fastify.post("/gateway/trips/materialize", async (request, reply) => {
+    const body = request.body as { tripId?: string; baseId?: string; serviceDate?: string };
+    const tripId = body.tripId ?? (body.baseId ? `nusa-shuttle:virtual-${body.baseId}` : undefined);
+    if (!tripId || !body.serviceDate) {
+      return reply.status(400).send({ error: "tripId (atau baseId) dan serviceDate wajib diisi.", code: "VALIDATION_ERROR" });
+    }
+    try {
+      const result = await aggregator.materializeTripPublic(tripId, body.serviceDate);
+      return { tripId: result.materializedTripId };
+    } catch (e) {
+      return handleGatewayError(e, reply);
+    }
+  });
+
   fastify.get("/gateway/trips/:tripId", async (request, reply) => {
     const { tripId } = request.params as { tripId: string };
     const query = request.query as { serviceDate?: string };

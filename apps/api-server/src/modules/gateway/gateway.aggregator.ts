@@ -198,6 +198,32 @@ async function resolveOperator(tripId: string): Promise<{ operator: OperatorRow;
   return { operator, originalId, operatorSlug, isVirtual };
 }
 
+export async function materializeTripPublic(
+  tripId: string,
+  serviceDate: string
+): Promise<{ tripId: string; materializedTripId: string; operatorSlug: string }> {
+  const resolved = await resolveOperator(tripId);
+  if (!resolved) {
+    throw new GatewayError("Operator tidak ditemukan.", 404, "NOT_FOUND");
+  }
+  const { operator, originalId, operatorSlug, isVirtual } = resolved;
+
+  if (!isVirtual) {
+    return { tripId, materializedTripId: originalId, operatorSlug };
+  }
+
+  try {
+    const realId = await materializeTrip(operator, originalId, serviceDate);
+    return {
+      tripId,
+      materializedTripId: realId,
+      operatorSlug,
+    };
+  } catch (e) {
+    throw translateError(e, `materialize ${tripId}`);
+  }
+}
+
 async function materializeTrip(
   operator: OperatorRow,
   virtualId: string,
