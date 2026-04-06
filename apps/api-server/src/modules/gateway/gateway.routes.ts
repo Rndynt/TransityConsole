@@ -81,25 +81,13 @@ const gatewayRoutes: FastifyPluginAsync = async (fastify) => {
     };
 
     let tripId = body.tripId;
-    if (!tripId && body.baseId) {
-      if (body.operatorSlug) {
-        tripId = `${body.operatorSlug}:virtual-${body.baseId}`;
-      } else {
-        try {
-          const result = await aggregator.materializeByBaseId(body.baseId, body.serviceDate ?? "");
-          if (!result) {
-            return reply.status(404).send({ error: "Trip tidak ditemukan di operator manapun.", code: "NOT_FOUND" });
-          }
-          return { tripId: result.materializedTripId };
-        } catch (e) {
-          return handleGatewayError(e, reply);
-        }
-      }
+    if (!tripId && body.baseId && body.operatorSlug) {
+      tripId = `${body.operatorSlug}:virtual-${body.baseId}`;
     }
 
     if (!tripId || !body.serviceDate) {
       return reply.status(400).send({
-        error: "tripId atau baseId beserta serviceDate wajib diisi.",
+        error: "tripId dan serviceDate wajib diisi. Gunakan tripId dari hasil pencarian.",
         code: "VALIDATION_ERROR",
       });
     }
