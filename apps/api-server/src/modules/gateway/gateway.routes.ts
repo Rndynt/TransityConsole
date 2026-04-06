@@ -23,6 +23,7 @@ async function verifyApiKeyOrJwt(request: { headers: Record<string, string | str
 const SAFE_ERROR_CODES = new Set([
   "NOT_FOUND", "NOT_ELIGIBLE", "SEAT_UNAVAILABLE", "VALIDATION_ERROR",
   "AUTH_ERROR", "TIMEOUT", "TERMINAL_ERROR", "UNKNOWN", "MISSING_SERVICE_DATE",
+  "HOLD_EXPIRED", "ALREADY_PROCESSED",
 ]);
 
 function sanitizeErrorMessage(msg: string, code?: string): string {
@@ -72,11 +73,25 @@ const gatewayRoutes: FastifyPluginAsync = async (fastify) => {
   });
 
   fastify.post("/gateway/trips/materialize", async (request, reply) => {
-    const body = request.body as { tripId?: string; baseId?: string; serviceDate?: string };
-    const tripId = body.tripId ?? (body.baseId ? `nusa-shuttle:virtual-${body.baseId}` : undefined);
-    if (!tripId || !body.serviceDate) {
-      return reply.status(400).send({ error: "tripId (atau baseId) dan serviceDate wajib diisi.", code: "VALIDATION_ERROR" });
+    const body = request.body as {
+      tripId?: string;
+      baseId?: string;
+      operatorSlug?: string;
+      serviceDate?: string;
+    };
+
+    let tripId = body.tripId;
+    if (!tripId && body.baseId && body.operatorSlug) {
+      tripId = `${body.operatorSlug}:virtual-${body.baseId}`;
     }
+
+    if (!tripId || !body.serviceDate) {
+      return reply.status(400).send({
+        error: "tripId (atau baseId + operatorSlug) dan serviceDate wajib diisi.",
+        code: "VALIDATION_ERROR",
+      });
+    }
+
     try {
       const result = await aggregator.materializeTripPublic(tripId, body.serviceDate);
       return { tripId: result.materializedTripId };
@@ -205,10 +220,9 @@ const gatewayRoutes: FastifyPluginAsync = async (fastify) => {
       return reply.status(201).send(result);
     } catch (e) {
       if (e instanceof proxy.GatewayError) {
-        if (e.code === "SEAT_UNAVAILABLE" || (e.message && e.message.includes("seat"))) {
+        if (e.code === "SEAT_UNAVAILABLE" || (e.message && e.message.toLowerCase().includes("seat"))) {
           aggregator.invalidateSeatmapCache(body.tripId);
         }
-        return reply.status(e.statusCode).send({ error: e.message, code: e.code });
       }
       return handleGatewayError(e, reply);
     }
@@ -249,7 +263,6 @@ const gatewayRoutes: FastifyPluginAsync = async (fastify) => {
       });
       return result;
     } catch (e) {
-      if (e instanceof proxy.GatewayError) return reply.status(e.statusCode).send({ error: e.message, code: e.code });
       return handleGatewayError(e, reply);
     }
   });

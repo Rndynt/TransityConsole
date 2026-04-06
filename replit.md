@@ -30,7 +30,8 @@ Internal admin dashboard and API gateway for the Transity ecosystem (Indonesian 
 
 **Gateway endpoints** (TransityTerminal integration):
 - `GET /api/gateway/trips/search?originCity=&destinationCity=&date=&passengers=` — aggregated trip search (cached 90s)
-- `GET /api/gateway/trips/:tripId?serviceDate=` — trip detail; virtual trips auto-materialize via `POST /api/app/trips/materialize` on terminal, falls back to search data if endpoint not deployed yet
+- `POST /api/gateway/trips/materialize` — materialize virtual trip; accepts `{ tripId, serviceDate }` or `{ baseId, operatorSlug, serviceDate }`, forwards to terminal's `POST /api/app/trips/materialize`
+- `GET /api/gateway/trips/:tripId?serviceDate=` — trip detail; virtual trips auto-materialize, falls back to search data if endpoint not deployed yet
 - `GET /api/gateway/trips/:tripId/seatmap?originSeq=&destinationSeq=&serviceDate=` — seatmap (cached 45s); virtual trips materialize first for real seat data
 - `GET /api/gateway/trips/:tripId/reviews` — trip reviews proxy
 - `GET /api/gateway/cities` — aggregated cities from all operators (cached 5min)

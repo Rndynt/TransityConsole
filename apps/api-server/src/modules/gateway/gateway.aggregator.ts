@@ -314,35 +314,48 @@ export class GatewayError extends Error {
 
 function translateError(err: unknown, context: string): GatewayError {
   const msg = err instanceof Error ? err.message : String(err);
+  const m = msg.toLowerCase();
   const statusCode = err instanceof GatewayError ? err.statusCode : 502;
 
-  if (msg.includes("not found") || msg.includes("Trip not found")) {
+  if (m.includes("not found") || m.includes("trip not found")) {
     return new GatewayError("Perjalanan tidak ditemukan. Silakan cari ulang.", 404, "NOT_FOUND");
   }
-  if (msg.includes("not eligible") || msg.includes("base-not-eligible")) {
+  if (m.includes("not eligible") || m.includes("base-not-eligible") || m.includes("tidak eligible")) {
     return new GatewayError("Jadwal tidak tersedia untuk tanggal ini.", 422, "NOT_ELIGIBLE");
   }
-  if (msg.includes("seat") && (msg.includes("unavailable") || msg.includes("not available") || msg.includes("already"))) {
+  if (m.includes("already booked")) {
+    return new GatewayError("Kursi sudah dipesan. Silakan pilih kursi lain.", 409, "SEAT_UNAVAILABLE");
+  }
+  if (m.includes("currently held")) {
+    return new GatewayError("Kursi sedang diproses penumpang lain. Silakan pilih kursi lain.", 409, "SEAT_UNAVAILABLE");
+  }
+  if (m.includes("holds have expired") || m.includes("hold expired")) {
+    return new GatewayError("Waktu pembayaran habis. Silakan pesan ulang.", 410, "HOLD_EXPIRED");
+  }
+  if (m.includes("already processed")) {
+    return new GatewayError("Pembayaran sudah dikonfirmasi sebelumnya.", 400, "ALREADY_PROCESSED");
+  }
+  if (m.includes("seat") && (m.includes("unavailable") || m.includes("not available") || m.includes("already"))) {
     return new GatewayError("Kursi sudah tidak tersedia. Silakan pilih kursi lain.", 409, "SEAT_UNAVAILABLE");
   }
-  if (msg.includes("Validation") || msg.includes("Invalid") || msg.includes("required")) {
+  if (m.includes("validation") || m.includes("invalid") || m.includes("required")) {
     return new GatewayError("Data yang dikirim tidak valid. Silakan periksa kembali.", 400, "VALIDATION_ERROR");
   }
-  if (msg.includes("Unauthorized") || msg.includes("Service-Key") || msg.includes("INVALID_SERVICE_KEY")) {
+  if (m.includes("unauthorized") || m.includes("service-key") || m.includes("invalid_service_key")) {
     console.error(`[gateway] Auth error with terminal (${context}):`, msg);
     return new GatewayError("Terjadi gangguan koneksi dengan operator.", 502, "AUTH_ERROR");
   }
-  if (msg.includes("timeout") || msg.includes("TIMEOUT") || msg.includes("AbortError")) {
+  if (m.includes("timeout") || m.includes("aborterror")) {
     console.error(`[gateway] Timeout (${context}):`, msg);
     return new GatewayError("Layanan sedang sibuk. Coba lagi nanti.", 504, "TIMEOUT");
   }
-  if (statusCode >= 500 || msg.includes("ECONNREFUSED") || msg.includes("fetch failed")) {
+  if (statusCode >= 500 || m.includes("econnrefused") || m.includes("fetch failed")) {
     console.error(`[gateway] Terminal error (${context}):`, msg);
     return new GatewayError("Terjadi kesalahan sistem. Coba lagi nanti.", 502, "TERMINAL_ERROR");
   }
 
   console.error(`[gateway] Unhandled error (${context}):`, msg);
-  return new GatewayError("Terjadi kesalahan. Coba lagi nanti.", statusCode >= 400 ? statusCode : 502, "UNKNOWN");
+  return new GatewayError("Terjadi gangguan sistem. Silakan coba beberapa saat lagi.", statusCode >= 400 ? statusCode : 502, "UNKNOWN");
 }
 
 async function fetchTripsFromTerminal(operator: OperatorRow, params: TripSearchParams): Promise<TerminalTrip[]> {
