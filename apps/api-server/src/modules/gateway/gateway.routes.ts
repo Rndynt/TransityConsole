@@ -63,17 +63,6 @@ function handleGatewayError(e: unknown, reply: { status: (code: number) => { sen
   return reply.status(500).send({ error: "Terjadi kesalahan sistem. Coba lagi nanti.", code: "INTERNAL_ERROR" });
 }
 
-const PAYMENT_METHODS = [
-  { id: "QRIS", name: "QRIS", type: "qr" },
-  { id: "GOPAY", name: "GoPay", type: "ewallet" },
-  { id: "OVO", name: "OVO", type: "ewallet" },
-  { id: "DANA", name: "DANA", type: "ewallet" },
-  { id: "SHOPEEPAY", name: "ShopeePay", type: "ewallet" },
-  { id: "VA_BCA", name: "VA BCA", type: "va" },
-  { id: "VA_MANDIRI", name: "VA Mandiri", type: "va" },
-  { id: "VA_BNI", name: "VA BNI", type: "va" },
-  { id: "BANK_TRANSFER", name: "Bank Transfer", type: "transfer" },
-];
 
 const gatewayRoutes: FastifyPluginAsync = async (fastify) => {
 
@@ -328,6 +317,7 @@ const gatewayRoutes: FastifyPluginAsync = async (fastify) => {
     try {
       let discountAmount: string | undefined;
       let finalAmount: string | undefined;
+      let isPlatformVoucher = false;
 
       if (body.voucherCode) {
         const booking = await bookingsRepo.findById(bookingId);
@@ -336,28 +326,35 @@ const gatewayRoutes: FastifyPluginAsync = async (fastify) => {
         }
 
         const totalAmountNum = parseFloat(String(booking.totalAmount)) || 0;
-        const voucherResult = await vouchersService.validateVoucher(
-          body.voucherCode,
-          totalAmountNum,
-          booking.operatorId
-        );
 
-        if (!voucherResult.valid) {
-          return reply.status(400).send({ error: voucherResult.message, code: "VOUCHER_INVALID" });
+        try {
+          const voucherResult = await vouchersService.validateVoucher(
+            body.voucherCode,
+            totalAmountNum,
+            booking.operatorId
+          );
+
+          if (voucherResult.valid) {
+            isPlatformVoucher = true;
+            discountAmount = String(voucherResult.discountValue ?? 0);
+            finalAmount = String(voucherResult.finalAmount ?? totalAmountNum);
+          }
+        } catch (e) {
+          if (e instanceof Error && !e.message.toLowerCase().includes("not found") && !e.message.toLowerCase().includes("tidak ditemukan")) {
+            throw e;
+          }
         }
-
-        discountAmount = String(voucherResult.discountValue ?? 0);
-        finalAmount = String(voucherResult.finalAmount ?? totalAmountNum);
       }
 
       const result = await proxy.payBooking(bookingId, {
         paymentMethod: body.paymentMethod,
         voucherCode: body.voucherCode,
+        isPlatformVoucher,
         discountAmount,
         finalAmount,
       }, customerId ?? undefined);
 
-      if (body.voucherCode) {
+      if (body.voucherCode && isPlatformVoucher) {
         const reserved = await vouchersService.reserveVoucher(body.voucherCode);
         if (!reserved) {
           console.warn(`[gateway] Voucher ${body.voucherCode} could not be reserved after payment for booking ${bookingId}`);
@@ -382,8 +379,34 @@ const gatewayRoutes: FastifyPluginAsync = async (fastify) => {
     }
   });
 
-  fastify.get("/gateway/payments/methods", async () => {
-    return { methods: PAYMENT_METHODS };
+  fastify.get("/gateway/payments/methods", async (request, reply) => {
+    const query = request.query as { operatorSlug?: string; bookingId?: string };
+
+    let operatorSlug = query.operatorSlug;
+
+    if (!operatorSlug && query.bookingId) {
+      try {
+        const booking = await bookingsRepo.findById(query.bookingId);
+        if (booking?.tripId) {
+          const colonIdx = booking.tripId.indexOf(":");
+          if (colonIdx !== -1) operatorSlug = booking.tripId.slice(0, colonIdx);
+        }
+      } catch { /* ignore */ }
+    }
+
+    if (!operatorSlug) {
+      return reply.status(400).send({
+        error: "operatorSlug atau bookingId wajib diisi.",
+        code: "VALIDATION_ERROR",
+      });
+    }
+
+    try {
+      const methods = await proxy.getPaymentMethods(operatorSlug);
+      return { methods };
+    } catch (e) {
+      return handleGatewayError(e, reply);
+    }
   });
 
   fastify.post("/gateway/vouchers/validate", async (request, reply) => {
@@ -391,20 +414,22 @@ const gatewayRoutes: FastifyPluginAsync = async (fastify) => {
       code?: string;
       tripId?: string;
       totalAmount?: number;
+      operatorSlug?: string;
     } | null;
 
-    if (!body?.code || !body.totalAmount) {
+    if (!body?.code) {
       return reply.status(400).send({
-        error: "code dan totalAmount wajib diisi.",
+        error: "code wajib diisi.",
         code: "VALIDATION_ERROR",
       });
     }
 
+    let operatorSlug: string | undefined = body.operatorSlug;
     let operatorId: string | undefined;
     if (body.tripId) {
       const colonIdx = body.tripId.indexOf(":");
       if (colonIdx !== -1) {
-        const operatorSlug = body.tripId.slice(0, colonIdx);
+        operatorSlug = body.tripId.slice(0, colonIdx);
         try {
           const { rows } = await (await import("../operators/operators.repository.js")).findAll(
             { active: true },
@@ -417,11 +442,38 @@ const gatewayRoutes: FastifyPluginAsync = async (fastify) => {
     }
 
     try {
-      const result = await vouchersService.validateVoucher(body.code, body.totalAmount, operatorId);
-      return result;
+      const platformResult = await vouchersService.validateVoucher(
+        body.code,
+        body.totalAmount ?? 0,
+        operatorId
+      );
+
+      if (platformResult.valid) {
+        return { ...platformResult, source: "platform" };
+      }
     } catch (e) {
-      return handleGatewayError(e, reply);
+      if (e instanceof Error && !e.message.toLowerCase().includes("not found") && !e.message.toLowerCase().includes("tidak ditemukan")) {
+        return handleGatewayError(e, reply);
+      }
     }
+
+    if (operatorSlug) {
+      try {
+        const operatorResult = await proxy.validateOperatorVoucher(
+          operatorSlug,
+          body.code,
+          body.totalAmount
+        );
+        return { ...operatorResult, source: "operator" };
+      } catch (e) {
+        return handleGatewayError(e, reply);
+      }
+    }
+
+    return reply.status(400).send({
+      error: "Voucher tidak ditemukan atau tidak berlaku.",
+      code: "VOUCHER_INVALID",
+    });
   });
 
   fastify.post("/gateway/payments/webhook", async (request, reply) => {

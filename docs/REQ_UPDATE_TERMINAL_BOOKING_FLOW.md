@@ -300,19 +300,26 @@ Console mengharapkan response format berikut dari endpoint baru/yang diubah:
 
 ## Checklist Implementasi
 
-- [ ] Tambah `POST /api/app/bookings/:id/pay` route + controller + service
-- [ ] Ubah `paymentMethod` di `createBookingSchema` dari wajib menjadi opsional
-- [ ] Handle booking tanpa `paymentMethod`: buat status `held` + set `holdExpiresAt`
-- [ ] Ganti middleware di `POST /api/app/bookings/:id/cancel` dari `appAuthMiddleware` ke `bookingAuthMiddleware`
-- [ ] Ganti middleware di `GET /api/app/bookings/:id` dari `appAuthMiddleware` ke `bookingAuthMiddleware`
-- [ ] Handle `userId: null` di cancel dan getBookingDetail service (skip ownership check untuk service client)
-- [ ] Test: create booking tanpa `paymentMethod` → status `held`, ada `holdExpiresAt`
-- [ ] Test: pay booking via service key → status `confirmed`, ada `paymentIntent`
-- [ ] Test: cancel booking via service key → status `cancelled`
-- [ ] Test: get booking detail via service key → return full detail
+- [x] Tambah `POST /api/app/bookings/:id/pay` route + controller + service ✅ **DONE by Terminal**
+- [x] Ubah `paymentMethod` di `createBookingSchema` dari wajib menjadi opsional ✅ **DONE by Terminal**
+- [x] Handle booking tanpa `paymentMethod`: buat status `held` + set `holdExpiresAt` ✅ **DONE by Terminal**
+- [x] Ganti middleware di `POST /api/app/bookings/:id/cancel` untuk terima `X-Service-Key` ✅ **DONE by Terminal**
+- [x] Ganti middleware di `GET /api/app/bookings/:id` untuk terima `X-Service-Key` ✅ **DONE by Terminal**
+- [x] Handle `userId: null` di cancel dan getBookingDetail service ✅ **DONE by Terminal**
+- [x] `GET /api/app/payments/methods` — endpoint metode pembayaran ✅ **DONE by Terminal**
+- [x] `POST /api/app/vouchers/validate` — endpoint validasi voucher operator ✅ **DONE by Terminal**
+
+## Checklist Adaptasi Console
+
+- [x] Pay endpoint: kirim `{ paymentMethod, voucherCode }` ke Terminal (bukan `{ paymentMethod, amount }`) ✅ **DONE**
+- [x] Payment methods: proxy dari Terminal per operator (bukan static list) ✅ **DONE**
+- [x] Cancel booking: izinkan status `confirmed` selain `held`/`pending` ✅ **DONE**
+- [x] Voucher validation: support platform (Console) + operator (Terminal) dengan fallthrough ✅ **DONE**
+- [x] Pay flow: platform voucher di-handle Console, operator voucher di-forward ke Terminal ✅ **DONE**
+- [x] Response mapping: gunakan `discountAmount`/`finalAmount` dari Terminal untuk operator voucher ✅ **DONE**
 
 ---
 
-## Timeline
+## Status
 
-Perubahan ini diperlukan **sebelum** fitur booking flow dari TransityApp bisa di-launch. Tanpa endpoint `/pay` dan perubahan `paymentMethod` opsional, customer tidak bisa membuat booking (karena selalu error validasi) dan tidak bisa membayar booking yang sudah di-hold.
+✅ **SELESAI** — Semua perubahan Terminal sudah diimplementasikan. Console sudah diadaptasi sesuai API Terminal terbaru (per 7 April 2026).
