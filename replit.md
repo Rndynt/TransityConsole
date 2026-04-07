@@ -50,7 +50,14 @@ Internal admin dashboard and API gateway for the Transity ecosystem (Indonesian 
 
 **Error translation**: All terminal errors are translated to user-friendly Bahasa Indonesia messages. Technical details logged server-side only.
 
-**Database tables**: `operators` (+ `webhookSecret`), `terminal_health`, `bookings` (+ `providerRef`, `holdExpiresAt`, `paymentMethod`, `passengersJson`, `originStopId`, `destinationStopId`, `serviceDate`), `admin_users`, `api_keys`
+**Customer auth endpoints** (TransityApp end-user):
+- `POST /api/gateway/auth/register` — register customer (fullName, email, phone, password)
+- `POST /api/gateway/auth/login` — login by email or phone + password, returns JWT (30d)
+- `GET /api/gateway/auth/me` — get profile (Bearer token)
+- `PUT /api/gateway/auth/profile` — update fullName/phone (Bearer token)
+- `POST /api/gateway/auth/change-password` — change password (Bearer token)
+
+**Database tables**: `operators` (+ `webhookSecret`), `terminal_health`, `bookings` (+ `providerRef`, `holdExpiresAt`, `paymentMethod`, `passengersJson`, `originStopId`, `destinationStopId`, `serviceDate`), `admin_users`, `api_keys`, `customers` (fullName, email, phone, passwordHash, avatarUrl, isVerified, lastLoginAt)
 
 ## Structure
 

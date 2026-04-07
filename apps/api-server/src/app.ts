@@ -10,6 +10,7 @@ import bookingsRoutes from "./modules/bookings/bookings.routes.js";
 import analyticsRoutes from "./modules/analytics/analytics.routes.js";
 import gatewayRoutes from "./modules/gateway/gateway.routes.js";
 import authRoutes from "./modules/auth/auth.routes.js";
+import customerRoutes from "./modules/customers/customers.routes.js";
 import { startHealthScheduler, stopHealthScheduler } from "./modules/terminals/terminals.scheduler.js";
 import { ensureDefaultAdmin } from "./modules/auth/auth.service.js";
 import { runMigrations } from "@workspace/db";
@@ -54,6 +55,7 @@ export async function buildApp() {
     await api.register(bookingsRoutes);
     await api.register(analyticsRoutes);
     await api.register(gatewayRoutes);
+    await api.register(customerRoutes);
   }, { prefix: "/api" });
 
   if (isProduction) {
