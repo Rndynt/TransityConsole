@@ -37,12 +37,12 @@ Internal admin dashboard and API gateway for the Transity ecosystem (Indonesian 
 - `GET /api/gateway/cities` — aggregated cities from all operators (cached 5min)
 - `GET /api/gateway/operators/:operatorSlug/info` — operator brand info (cached 15min)
 - `GET /api/gateway/service-lines` — aggregated service lines (cached 5min)
-- `POST /api/gateway/bookings` — create booking, paymentMethod opsional (hold-only jika tidak ada). Invalidates seatmap cache on success
+- `POST /api/gateway/bookings` — create booking (tanpa paymentMethod, booking masuk status pending/held, kursi di-hold 15 menit). Invalidates seatmap cache on success
 - `GET /api/gateway/bookings` — list bookings per customer (JWT required), includes holdExpiresAt
 - `GET /api/gateway/bookings/:bookingId` — get booking by ID
-- `POST /api/gateway/bookings/:bookingId/pay` — bayar booking held/pending, kirim `{ paymentMethod, voucherCode? }` ke Terminal. Platform voucher di-handle Console, operator voucher di-forward ke Terminal
+- `POST /api/gateway/bookings/:bookingId/pay` — bayar booking held/pending. **Pembayaran diproses Console** (bukan Terminal). Console catat payment, update status confirmed, lalu async notify Terminal via webhook. Kirim `{ paymentMethod, voucherCode? }`
 - `POST /api/gateway/bookings/:bookingId/cancel` — cancel booking held/pending/confirmed (forward ke Terminal)
-- `GET /api/gateway/payments/methods?operatorSlug=|bookingId=` — list metode pembayaran (proxied dari Terminal per operator)
+- `GET /api/gateway/payments/methods` — list metode pembayaran (statis, dikelola Console, berlaku semua operator)
 - `POST /api/gateway/vouchers/validate` — validasi voucher: coba platform (Console) dulu, fallback ke operator (Terminal). Response includes `source: "platform"|"operator"`
 - `POST /api/gateway/payments/webhook` — forward payment webhook to terminal (HMAC-SHA256 signed)
 

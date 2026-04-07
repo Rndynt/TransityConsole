@@ -39,7 +39,8 @@ function extractCustomerId(request: { headers: Record<string, string | string[] 
 const SAFE_ERROR_CODES = new Set([
   "NOT_FOUND", "NOT_ELIGIBLE", "SEAT_UNAVAILABLE", "VALIDATION_ERROR",
   "AUTH_ERROR", "TIMEOUT", "TERMINAL_ERROR", "UNKNOWN", "MISSING_SERVICE_DATE",
-  "HOLD_EXPIRED", "ALREADY_PROCESSED", "INVALID_STATUS",
+  "HOLD_EXPIRED", "ALREADY_PROCESSED", "INVALID_STATUS", "INVALID_PAYMENT_METHOD",
+  "VOUCHER_INVALID",
 ]);
 
 function sanitizeErrorMessage(msg: string, code?: string): string {
@@ -196,7 +197,6 @@ const gatewayRoutes: FastifyPluginAsync = async (fastify) => {
       originSeq?: number;
       destinationSeq?: number;
       passengers?: proxy.PassengerInput[];
-      paymentMethod?: string;
     } | null;
 
     if (
@@ -230,7 +230,6 @@ const gatewayRoutes: FastifyPluginAsync = async (fastify) => {
         originSeq: body.originSeq,
         destinationSeq: body.destinationSeq,
         passengers: body.passengers,
-        paymentMethod: body.paymentMethod,
         customerId: customerId ?? undefined,
       });
 
@@ -379,34 +378,8 @@ const gatewayRoutes: FastifyPluginAsync = async (fastify) => {
     }
   });
 
-  fastify.get("/gateway/payments/methods", async (request, reply) => {
-    const query = request.query as { operatorSlug?: string; bookingId?: string };
-
-    let operatorSlug = query.operatorSlug;
-
-    if (!operatorSlug && query.bookingId) {
-      try {
-        const booking = await bookingsRepo.findById(query.bookingId);
-        if (booking?.tripId) {
-          const colonIdx = booking.tripId.indexOf(":");
-          if (colonIdx !== -1) operatorSlug = booking.tripId.slice(0, colonIdx);
-        }
-      } catch { /* ignore */ }
-    }
-
-    if (!operatorSlug) {
-      return reply.status(400).send({
-        error: "operatorSlug atau bookingId wajib diisi.",
-        code: "VALIDATION_ERROR",
-      });
-    }
-
-    try {
-      const methods = await proxy.getPaymentMethods(operatorSlug);
-      return { methods };
-    } catch (e) {
-      return handleGatewayError(e, reply);
-    }
+  fastify.get("/gateway/payments/methods", async (_request, _reply) => {
+    return { methods: proxy.getPaymentMethods() };
   });
 
   fastify.post("/gateway/vouchers/validate", async (request, reply) => {

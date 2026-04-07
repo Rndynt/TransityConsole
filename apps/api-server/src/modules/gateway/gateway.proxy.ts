@@ -30,7 +30,6 @@ export interface BookingRequest {
   originSeq: number;
   destinationSeq: number;
   passengers: PassengerInput[];
-  paymentMethod?: string;
   customerId?: string;
 }
 
@@ -97,10 +96,6 @@ export async function createBooking(req: BookingRequest): Promise<BookingResult>
     })),
   };
 
-  if (req.paymentMethod) {
-    terminalPayload.paymentMethod = req.paymentMethod;
-  }
-
   let terminalResponse: Record<string, unknown> | null = null;
   let externalBookingId: string | null = null;
 
@@ -147,9 +142,7 @@ export async function createBooking(req: BookingRequest): Promise<BookingResult>
   const seatNumbers = req.passengers.map((p) => p.seatNo);
   const primaryPassenger = req.passengers[0];
 
-  const bookingStatus = req.paymentMethod
-    ? String(terminalResponse["status"] ?? "pending")
-    : String(terminalResponse["status"] ?? "held");
+  const bookingStatus = String(terminalResponse["status"] ?? "pending");
 
   const booking = await bookingsRepo.create({
     operatorId: operator.id,
@@ -168,7 +161,7 @@ export async function createBooking(req: BookingRequest): Promise<BookingResult>
     status: bookingStatus,
     providerRef: providerRef || null,
     holdExpiresAt: holdExpiresAt ? new Date(holdExpiresAt) : null,
-    paymentMethod: req.paymentMethod ?? null,
+    paymentMethod: null,
     passengersJson: JSON.stringify(req.passengers),
     originStopId: req.originStopId,
     destinationStopId: req.destinationStopId,
@@ -239,80 +232,26 @@ export async function payBooking(
     throw new GatewayError("Masa hold booking sudah habis.", "HOLD_EXPIRED", 400);
   }
 
-  const operator = await findOperatorById(booking.operatorId);
+  if (!isValidPaymentMethod(req.paymentMethod)) {
+    throw new GatewayError(
+      `Metode pembayaran "${req.paymentMethod}" tidak valid. Gunakan salah satu dari: ${CONSOLE_PAYMENT_METHODS.map(m => m.id).join(", ")}`,
+      "INVALID_PAYMENT_METHOD",
+      400
+    );
+  }
 
   const totalAmountNum = parseFloat(String(booking.totalAmount)) || 0;
   const discountAmountNum = req.discountAmount ? parseFloat(req.discountAmount) : 0;
   const finalAmountNum = req.finalAmount ? parseFloat(req.finalAmount) : (totalAmountNum - discountAmountNum);
 
-  const terminalPayload: Record<string, unknown> = {
-    paymentMethod: req.paymentMethod,
-  };
-
-  if (req.voucherCode && !req.isPlatformVoucher) {
-    terminalPayload.voucherCode = req.voucherCode;
-  }
-
-  let terminalResponse: Record<string, unknown> | null = null;
-
-  try {
-    const res = await fetch(
-      `${operator.apiUrl}/api/app/bookings/${encodeURIComponent(booking.externalBookingId ?? bookingId)}/pay`,
-      {
-        method: "POST",
-        signal: AbortSignal.timeout(TERMINAL_TIMEOUT_MS),
-        headers: {
-          "X-Service-Key": operator.serviceKey,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(terminalPayload),
-      }
-    );
-
-    if (!res.ok) {
-      const errBody = await res.json().catch(() => ({}));
-      const errMsg = (errBody as Record<string, unknown>)["message"] ?? (errBody as Record<string, unknown>)["error"] ?? `HTTP ${res.status}`;
-      throw new GatewayError(String(errMsg), "TERMINAL_ERROR", res.status);
-    }
-
-    terminalResponse = (await res.json()) as Record<string, unknown>;
-  } catch (e) {
-    if (e instanceof GatewayError) throw e;
-    throw new GatewayError(
-      `Gagal menghubungi terminal operator: ${e instanceof Error ? e.message : String(e)}`,
-      "TERMINAL_UNAVAILABLE",
-      503
-    );
-  }
-
-  const newStatus = String(terminalResponse["status"] ?? "confirmed");
-  const paymentIntent = (terminalResponse["paymentIntent"] as Record<string, unknown>) ?? null;
-  const providerRef = paymentIntent ? String(paymentIntent["providerRef"] ?? "") : null;
-  const qrData = (terminalResponse["qrData"] as unknown[]) ?? null;
-
-  let effectiveDiscount: string | null;
-  let effectiveFinal: string;
-
-  if (req.isPlatformVoucher) {
-    effectiveDiscount = discountAmountNum > 0 ? String(discountAmountNum) : null;
-    effectiveFinal = String(finalAmountNum);
-  } else {
-    const termDiscount = terminalResponse["discountAmount"];
-    const termFinal = terminalResponse["finalAmount"];
-    effectiveDiscount = (termDiscount !== undefined && termDiscount !== null)
-      ? String(termDiscount)
-      : (discountAmountNum > 0 ? String(discountAmountNum) : null);
-    effectiveFinal = (termFinal !== undefined && termFinal !== null)
-      ? String(termFinal)
-      : String(finalAmountNum);
-  }
+  const providerRef = `PAY-${crypto.randomUUID().replace(/-/g, "").slice(0, 24).toUpperCase()}`;
 
   const updated = await bookingsRepo.updatePayment(booking.id, {
-    status: newStatus,
+    status: "confirmed",
     paymentMethod: req.paymentMethod,
-    providerRef: providerRef || booking.providerRef || null,
-    discountAmount: effectiveDiscount,
-    finalAmount: effectiveFinal,
+    providerRef,
+    discountAmount: discountAmountNum > 0 ? String(discountAmountNum) : null,
+    finalAmount: String(finalAmountNum),
     voucherCode: req.voucherCode ?? null,
   }, ["held", "pending"]);
 
@@ -320,18 +259,56 @@ export async function payBooking(
     throw new GatewayError("Booking sudah diproses oleh request lain.", "ALREADY_PROCESSED", 409);
   }
 
+  const operator = await findOperatorById(booking.operatorId);
+  notifyTerminalPaid(operator, booking.externalBookingId ?? bookingId, providerRef);
+
+  const paymentMethod = CONSOLE_PAYMENT_METHODS.find(m => m.id === req.paymentMethod);
+
   return {
     bookingId: booking.id,
     externalBookingId: booking.externalBookingId,
-    status: newStatus,
+    status: "confirmed",
     paymentMethod: req.paymentMethod,
     totalAmount: String(booking.totalAmount),
-    discountAmount: effectiveDiscount,
-    finalAmount: effectiveFinal,
-    paymentIntent,
-    qrData,
-    raw: terminalResponse,
+    discountAmount: discountAmountNum > 0 ? String(discountAmountNum) : null,
+    finalAmount: String(finalAmountNum),
+    paymentIntent: {
+      paymentId: providerRef,
+      providerRef,
+      method: paymentMethod?.type ?? req.paymentMethod,
+      amount: String(finalAmountNum),
+    },
+    qrData: null,
+    raw: null,
   };
+}
+
+function notifyTerminalPaid(
+  operator: { apiUrl: string; serviceKey: string; webhookSecret: string | null },
+  externalBookingId: string,
+  providerRef: string
+): void {
+  const payload = JSON.stringify({
+    bookingId: externalBookingId,
+    providerRef,
+    status: "success",
+  });
+  const signature = operator.webhookSecret
+    ? crypto.createHmac("sha256", operator.webhookSecret).update(payload).digest("hex")
+    : "";
+
+  fetch(`${operator.apiUrl}/api/app/payments/webhook`, {
+    method: "POST",
+    signal: AbortSignal.timeout(TERMINAL_TIMEOUT_MS),
+    headers: {
+      "Content-Type": "application/json",
+      "X-Service-Key": operator.serviceKey,
+      ...(signature ? { "X-Webhook-Signature": signature } : {}),
+    },
+    body: payload,
+  }).catch((err) => {
+    console.error(`[gateway] Failed to notify terminal of payment for booking ${externalBookingId}:`, err);
+  });
 }
 
 export interface CancelBookingResult {
@@ -433,34 +410,26 @@ export async function getBookingById(bookingId: string, customerId?: string): Pr
   };
 }
 
-export async function getPaymentMethods(operatorSlug: string): Promise<Array<Record<string, unknown>>> {
-  const operator = await findOperatorBySlug(operatorSlug);
+export const CONSOLE_PAYMENT_METHODS = [
+  { id: "QRIS", name: "QRIS", type: "qr", description: "Pembayaran via QRIS" },
+  { id: "GOPAY", name: "GoPay", type: "ewallet", description: "Pembayaran via GoPay" },
+  { id: "OVO", name: "OVO", type: "ewallet", description: "Pembayaran via OVO" },
+  { id: "DANA", name: "DANA", type: "ewallet", description: "Pembayaran via DANA" },
+  { id: "SHOPEEPAY", name: "ShopeePay", type: "ewallet", description: "Pembayaran via ShopeePay" },
+  { id: "VA_BCA", name: "VA BCA", type: "va", description: "Virtual Account BCA" },
+  { id: "VA_MANDIRI", name: "VA Mandiri", type: "va", description: "Virtual Account Mandiri" },
+  { id: "VA_BNI", name: "VA BNI", type: "va", description: "Virtual Account BNI" },
+  { id: "BANK_TRANSFER", name: "Bank Transfer", type: "transfer", description: "Transfer bank manual" },
+];
 
-  try {
-    const res = await fetch(`${operator.apiUrl}/api/app/payments/methods`, {
-      method: "GET",
-      signal: AbortSignal.timeout(TERMINAL_TIMEOUT_MS),
-      headers: { "X-Service-Key": operator.serviceKey },
-    });
+export function getPaymentMethods(): Array<Record<string, unknown>> {
+  return CONSOLE_PAYMENT_METHODS;
+}
 
-    if (!res.ok) {
-      throw new GatewayError(`Terminal returned HTTP ${res.status}`, "TERMINAL_ERROR", res.status);
-    }
+const VALID_PAYMENT_METHOD_IDS = new Set(CONSOLE_PAYMENT_METHODS.map((m) => m.id));
 
-    const data = await res.json();
-    if (Array.isArray(data)) return data;
-    if (data && typeof data === "object" && Array.isArray((data as Record<string, unknown>)["methods"])) {
-      return (data as Record<string, unknown>)["methods"] as Array<Record<string, unknown>>;
-    }
-    return [];
-  } catch (e) {
-    if (e instanceof GatewayError) throw e;
-    throw new GatewayError(
-      `Gagal menghubungi terminal operator: ${e instanceof Error ? e.message : String(e)}`,
-      "TERMINAL_UNAVAILABLE",
-      503
-    );
-  }
+export function isValidPaymentMethod(methodId: string): boolean {
+  return VALID_PAYMENT_METHOD_IDS.has(methodId);
 }
 
 export async function validateOperatorVoucher(
