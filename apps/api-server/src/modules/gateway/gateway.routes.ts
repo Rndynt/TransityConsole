@@ -2,6 +2,9 @@ import type { FastifyPluginAsync } from "fastify";
 import * as aggregator from "./gateway.aggregator.js";
 import * as proxy from "./gateway.proxy.js";
 import * as authService from "../auth/auth.service.js";
+import * as customerService from "../customers/customers.service.js";
+import * as bookingsRepo from "../bookings/bookings.repository.js";
+import * as vouchersService from "../vouchers/vouchers.service.js";
 
 async function verifyApiKeyOrJwt(request: { headers: Record<string, string | string[] | undefined> }): Promise<boolean> {
   const apiKey = request.headers["x-api-key"];
@@ -20,10 +23,23 @@ async function verifyApiKeyOrJwt(request: { headers: Record<string, string | str
   return false;
 }
 
+function extractCustomerId(request: { headers: Record<string, string | string[] | undefined> }): string | null {
+  const auth = request.headers["authorization"];
+  if (auth && typeof auth === "string" && auth.startsWith("Bearer ")) {
+    try {
+      const payload = customerService.verifyCustomerToken(auth.slice(7));
+      return payload.sub;
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
 const SAFE_ERROR_CODES = new Set([
   "NOT_FOUND", "NOT_ELIGIBLE", "SEAT_UNAVAILABLE", "VALIDATION_ERROR",
   "AUTH_ERROR", "TIMEOUT", "TERMINAL_ERROR", "UNKNOWN", "MISSING_SERVICE_DATE",
-  "HOLD_EXPIRED", "ALREADY_PROCESSED",
+  "HOLD_EXPIRED", "ALREADY_PROCESSED", "INVALID_STATUS",
 ]);
 
 function sanitizeErrorMessage(msg: string, code?: string): string {
@@ -46,6 +62,18 @@ function handleGatewayError(e: unknown, reply: { status: (code: number) => { sen
   console.error("[gateway] Unexpected error:", e);
   return reply.status(500).send({ error: "Terjadi kesalahan sistem. Coba lagi nanti.", code: "INTERNAL_ERROR" });
 }
+
+const PAYMENT_METHODS = [
+  { id: "QRIS", name: "QRIS", type: "qr" },
+  { id: "GOPAY", name: "GoPay", type: "ewallet" },
+  { id: "OVO", name: "OVO", type: "ewallet" },
+  { id: "DANA", name: "DANA", type: "ewallet" },
+  { id: "SHOPEEPAY", name: "ShopeePay", type: "ewallet" },
+  { id: "VA_BCA", name: "VA BCA", type: "va" },
+  { id: "VA_MANDIRI", name: "VA Mandiri", type: "va" },
+  { id: "VA_BNI", name: "VA BNI", type: "va" },
+  { id: "BANK_TRANSFER", name: "Bank Transfer", type: "transfer" },
+];
 
 const gatewayRoutes: FastifyPluginAsync = async (fastify) => {
 
@@ -189,19 +217,20 @@ const gatewayRoutes: FastifyPluginAsync = async (fastify) => {
       !body.destinationStopId ||
       body.originSeq === undefined ||
       body.destinationSeq === undefined ||
-      !body.passengers?.length ||
-      !body.paymentMethod
+      !body.passengers?.length
     ) {
       return reply.status(400).send({
-        error: "tripId, serviceDate, originStopId, destinationStopId, originSeq, destinationSeq, passengers, and paymentMethod are required",
+        error: "tripId, serviceDate, originStopId, destinationStopId, originSeq, destinationSeq, dan passengers wajib diisi.",
       });
     }
 
     for (const p of body.passengers) {
       if (!p.fullName || !p.seatNo) {
-        return reply.status(400).send({ error: "Each passenger requires fullName and seatNo" });
+        return reply.status(400).send({ error: "Setiap penumpang wajib memiliki fullName dan seatNo." });
       }
     }
+
+    const customerId = extractCustomerId(request);
 
     try {
       const result = await proxy.createBooking({
@@ -213,6 +242,7 @@ const gatewayRoutes: FastifyPluginAsync = async (fastify) => {
         destinationSeq: body.destinationSeq,
         passengers: body.passengers,
         paymentMethod: body.paymentMethod,
+        customerId: customerId ?? undefined,
       });
 
       aggregator.invalidateSeatmapCache(body.tripId);
@@ -228,12 +258,167 @@ const gatewayRoutes: FastifyPluginAsync = async (fastify) => {
     }
   });
 
+  fastify.get("/gateway/bookings", async (request, reply) => {
+    const customerId = extractCustomerId(request);
+    if (!customerId) {
+      return reply.status(401).send({ error: "Authorization diperlukan.", code: "AUTH_ERROR" });
+    }
+
+    const query = request.query as { status?: string; page?: string; limit?: string };
+    const page = parseInt(query.page ?? "1", 10);
+    const limit = Math.min(parseInt(query.limit ?? "20", 10), 50);
+    const offset = (page - 1) * limit;
+
+    try {
+      const { rows, total } = await bookingsRepo.findByCustomerId(
+        customerId,
+        { status: query.status },
+        { limit, offset }
+      );
+
+      const data = rows.map((b) => ({
+        bookingId: b.id,
+        externalBookingId: b.externalBookingId ?? null,
+        operatorId: b.operatorId,
+        operatorName: b.operatorName,
+        tripId: b.tripId,
+        status: b.status,
+        passengerName: b.passengerName,
+        passengerPhone: b.passengerPhone,
+        seatNumbers: b.seatNumbers,
+        totalAmount: b.totalAmount,
+        discountAmount: b.discountAmount ?? null,
+        finalAmount: b.finalAmount ?? b.totalAmount,
+        paymentMethod: b.paymentMethod ?? null,
+        holdExpiresAt: b.holdExpiresAt?.toISOString() ?? null,
+        serviceDate: b.serviceDate ?? b.departureDate,
+        createdAt: b.createdAt.toISOString(),
+      }));
+
+      return { data, total, page, limit, hasMore: offset + rows.length < total };
+    } catch (e) {
+      return handleGatewayError(e, reply);
+    }
+  });
+
   fastify.get("/gateway/bookings/:bookingId", async (request, reply) => {
     const { bookingId } = request.params as { bookingId: string };
+    const customerId = extractCustomerId(request);
     try {
-      const booking = await proxy.getBookingById(bookingId);
+      const booking = await proxy.getBookingById(bookingId, customerId ?? undefined);
       if (!booking) return reply.status(404).send({ error: "Booking tidak ditemukan." });
       return booking;
+    } catch (e) {
+      return handleGatewayError(e, reply);
+    }
+  });
+
+  fastify.post("/gateway/bookings/:bookingId/pay", async (request, reply) => {
+    const { bookingId } = request.params as { bookingId: string };
+    const customerId = extractCustomerId(request);
+    const body = request.body as {
+      paymentMethod?: string;
+      voucherCode?: string;
+    } | null;
+
+    if (!body?.paymentMethod) {
+      return reply.status(400).send({ error: "paymentMethod wajib diisi.", code: "VALIDATION_ERROR" });
+    }
+
+    try {
+      let discountAmount: string | undefined;
+      let finalAmount: string | undefined;
+
+      if (body.voucherCode) {
+        const booking = await bookingsRepo.findById(bookingId);
+        if (!booking) {
+          return reply.status(404).send({ error: "Booking tidak ditemukan.", code: "NOT_FOUND" });
+        }
+
+        const totalAmountNum = parseFloat(String(booking.totalAmount)) || 0;
+        const voucherResult = await vouchersService.validateVoucher(
+          body.voucherCode,
+          totalAmountNum,
+          booking.operatorId
+        );
+
+        if (!voucherResult.valid) {
+          return reply.status(400).send({ error: voucherResult.message, code: "VOUCHER_INVALID" });
+        }
+
+        discountAmount = String(voucherResult.discountValue ?? 0);
+        finalAmount = String(voucherResult.finalAmount ?? totalAmountNum);
+      }
+
+      const result = await proxy.payBooking(bookingId, {
+        paymentMethod: body.paymentMethod,
+        voucherCode: body.voucherCode,
+        discountAmount,
+        finalAmount,
+      }, customerId ?? undefined);
+
+      if (body.voucherCode) {
+        const reserved = await vouchersService.reserveVoucher(body.voucherCode);
+        if (!reserved) {
+          console.warn(`[gateway] Voucher ${body.voucherCode} could not be reserved after payment for booking ${bookingId}`);
+        }
+      }
+
+      return result;
+    } catch (e) {
+      return handleGatewayError(e, reply);
+    }
+  });
+
+  fastify.post("/gateway/bookings/:bookingId/cancel", async (request, reply) => {
+    const { bookingId } = request.params as { bookingId: string };
+    const customerId = extractCustomerId(request);
+
+    try {
+      const result = await proxy.cancelBooking(bookingId, customerId ?? undefined);
+      return result;
+    } catch (e) {
+      return handleGatewayError(e, reply);
+    }
+  });
+
+  fastify.get("/gateway/payments/methods", async () => {
+    return { methods: PAYMENT_METHODS };
+  });
+
+  fastify.post("/gateway/vouchers/validate", async (request, reply) => {
+    const body = request.body as {
+      code?: string;
+      tripId?: string;
+      totalAmount?: number;
+    } | null;
+
+    if (!body?.code || !body.totalAmount) {
+      return reply.status(400).send({
+        error: "code dan totalAmount wajib diisi.",
+        code: "VALIDATION_ERROR",
+      });
+    }
+
+    let operatorId: string | undefined;
+    if (body.tripId) {
+      const colonIdx = body.tripId.indexOf(":");
+      if (colonIdx !== -1) {
+        const operatorSlug = body.tripId.slice(0, colonIdx);
+        try {
+          const { rows } = await (await import("../operators/operators.repository.js")).findAll(
+            { active: true },
+            { limit: 100, offset: 0 }
+          );
+          const op = rows.find((o) => o.slug === operatorSlug);
+          if (op) operatorId = op.id;
+        } catch { /* ignore */ }
+      }
+    }
+
+    try {
+      const result = await vouchersService.validateVoucher(body.code, body.totalAmount, operatorId);
+      return result;
     } catch (e) {
       return handleGatewayError(e, reply);
     }

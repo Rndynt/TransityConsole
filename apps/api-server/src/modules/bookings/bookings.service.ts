@@ -5,6 +5,7 @@ export function formatBooking(b: repo.Booking) {
     id: b.id,
     operatorId: b.operatorId,
     operatorName: b.operatorName,
+    customerId: b.customerId ?? null,
     passengerName: b.passengerName,
     passengerPhone: b.passengerPhone,
     tripId: b.tripId,
@@ -14,8 +15,14 @@ export function formatBooking(b: repo.Booking) {
     seatNumbers: b.seatNumbers,
     totalAmount: parseFloat(String(b.totalAmount)),
     commissionAmount: parseFloat(String(b.commissionAmount ?? 0)),
+    discountAmount: b.discountAmount ? parseFloat(String(b.discountAmount)) : null,
+    finalAmount: b.finalAmount ? parseFloat(String(b.finalAmount)) : parseFloat(String(b.totalAmount)),
+    voucherCode: b.voucherCode ?? null,
     externalBookingId: b.externalBookingId ?? null,
     status: b.status,
+    holdExpiresAt: b.holdExpiresAt?.toISOString() ?? null,
+    paymentMethod: b.paymentMethod ?? null,
+    serviceDate: b.serviceDate ?? b.departureDate,
     createdAt: b.createdAt.toISOString(),
   };
 }

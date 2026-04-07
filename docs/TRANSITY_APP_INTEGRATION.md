@@ -508,7 +508,7 @@ Content-Type: application/json
 | `originSeq` | `number` | Ya | Sequence stop asal |
 | `destinationSeq` | `number` | Ya | Sequence stop tujuan |
 | `passengers` | `array` | Ya | Minimal 1 penumpang, masing-masing wajib `fullName` dan `seatNo` |
-| `paymentMethod` | `string` | Ya | `"cash"`, `"qr"`, `"ewallet"`, atau `"bank"` |
+| `paymentMethod` | `string` | — | Opsional. Jika tidak diisi, booking dibuat dalam status `held`. Contoh: `"QRIS"`, `"GOPAY"`, `"OVO"`, `"DANA"` |
 
 **Response `201 Created`:**
 ```json
@@ -551,6 +551,48 @@ Content-Type: application/json
 
 ---
 
+### GET /gateway/bookings
+
+List booking milik customer yang sedang login. Memerlukan JWT customer di header Authorization.
+
+**Request:**
+```http
+GET /api/gateway/bookings?status=held&page=1&limit=20
+Authorization: Bearer <customer-jwt>
+```
+
+| Parameter | Tipe | Wajib | Keterangan |
+|---|---|---|---|
+| `status` | `string` | — | Filter by status: `held`, `pending`, `confirmed`, `cancelled` |
+| `page` | `number` | — | Halaman (default: 1) |
+| `limit` | `number` | — | Jumlah per halaman (default: 20, max: 50) |
+
+**Response `200 OK`:**
+```json
+{
+  "data": [
+    {
+      "bookingId": "uuid-...",
+      "tripId": "nusa-shuttle:trip-001",
+      "status": "held",
+      "totalAmount": "200000",
+      "holdExpiresAt": "2026-04-15T10:20:00Z",
+      "passengerName": "Budi Santoso",
+      "seatNumbers": ["1A", "1C"],
+      "serviceDate": "2026-04-15",
+      "paymentMethod": null,
+      "createdAt": "2026-04-15T10:00:00Z"
+    }
+  ],
+  "total": 5,
+  "page": 1,
+  "limit": 20,
+  "hasMore": false
+}
+```
+
+---
+
 ### GET /gateway/bookings/:bookingId
 
 Status dan detail booking.
@@ -560,7 +602,145 @@ Status dan detail booking.
 GET /api/gateway/bookings/uuid-booking-...
 ```
 
-**Response `200 OK`:** Object booking (format sama seperti response create).
+**Response `200 OK`:** Object booking (format sama seperti response create, ditambah `holdExpiresAt`, `discountAmount`, `finalAmount`).
+
+---
+
+### POST /gateway/bookings/:bookingId/pay
+
+Membayar booking yang statusnya `held`. Console memforward ke Terminal operator.
+
+**Request:**
+```http
+POST /api/gateway/bookings/uuid-booking-.../pay
+Content-Type: application/json
+
+{
+  "paymentMethod": "QRIS",
+  "voucherCode": "PROMO50K"
+}
+```
+
+| Field | Tipe | Wajib | Keterangan |
+|---|---|---|---|
+| `paymentMethod` | `string` | Ya | Metode pembayaran (dari `/gateway/payments/methods`) |
+| `voucherCode` | `string` | — | Kode voucher (opsional, divalidasi otomatis) |
+
+**Response `200 OK`:**
+```json
+{
+  "bookingId": "uuid-...",
+  "status": "confirmed",
+  "paymentMethod": "QRIS",
+  "totalAmount": "200000",
+  "discountAmount": "50000",
+  "finalAmount": "150000",
+  "paymentIntent": { ... },
+  "qrData": [ ... ]
+}
+```
+
+**Error:**
+
+| Status | Code | Keterangan |
+|---|---|---|
+| `400` | `INVALID_STATUS` | Booking bukan status `held`/`pending` |
+| `400` | `HOLD_EXPIRED` | Hold sudah kadaluarsa |
+| `400` | `VOUCHER_INVALID` | Voucher tidak valid |
+| `404` | `NOT_FOUND` | Booking tidak ditemukan |
+
+---
+
+### POST /gateway/bookings/:bookingId/cancel
+
+Membatalkan booking yang statusnya `held` atau `pending`. Console memforward ke Terminal operator.
+
+**Request:**
+```http
+POST /api/gateway/bookings/uuid-booking-.../cancel
+```
+
+**Response `200 OK`:**
+```json
+{
+  "bookingId": "uuid-...",
+  "status": "cancelled",
+  "message": "Booking berhasil dibatalkan."
+}
+```
+
+**Error:** `400` jika booking sudah `confirmed`/`completed`. `404` jika tidak ditemukan.
+
+---
+
+### GET /gateway/payments/methods
+
+Daftar metode pembayaran yang tersedia.
+
+**Request:**
+```http
+GET /api/gateway/payments/methods
+```
+
+**Response `200 OK`:**
+```json
+{
+  "methods": [
+    { "id": "QRIS", "name": "QRIS", "type": "qr" },
+    { "id": "GOPAY", "name": "GoPay", "type": "ewallet" },
+    { "id": "OVO", "name": "OVO", "type": "ewallet" },
+    { "id": "DANA", "name": "DANA", "type": "ewallet" },
+    { "id": "SHOPEEPAY", "name": "ShopeePay", "type": "ewallet" },
+    { "id": "VA_BCA", "name": "VA BCA", "type": "va" },
+    { "id": "VA_MANDIRI", "name": "VA Mandiri", "type": "va" },
+    { "id": "VA_BNI", "name": "VA BNI", "type": "va" },
+    { "id": "BANK_TRANSFER", "name": "Bank Transfer", "type": "transfer" }
+  ]
+}
+```
+
+---
+
+### POST /gateway/vouchers/validate
+
+Validasi kode voucher sebelum pembayaran. Voucher ini dari platform Transity (bukan dari operator).
+
+**Request:**
+```http
+POST /api/gateway/vouchers/validate
+Content-Type: application/json
+
+{
+  "code": "PROMO50K",
+  "tripId": "nusa-shuttle:trip-001",
+  "totalAmount": 200000
+}
+```
+
+| Field | Tipe | Wajib | Keterangan |
+|---|---|---|---|
+| `code` | `string` | Ya | Kode voucher |
+| `tripId` | `string` | — | ID trip (untuk cek voucher per-operator) |
+| `totalAmount` | `number` | Ya | Total harga sebelum diskon |
+
+**Response `200 OK` (valid):**
+```json
+{
+  "valid": true,
+  "discountType": "fixed",
+  "discountValue": 50000,
+  "finalAmount": 150000,
+  "message": "Voucher berhasil diterapkan! Diskon Rp50.000"
+}
+```
+
+**Response `200 OK` (tidak valid):**
+```json
+{
+  "valid": false,
+  "message": "Kode voucher tidak valid atau sudah kadaluarsa."
+}
+```
 
 ---
 

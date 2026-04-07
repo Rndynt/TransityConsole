@@ -45,9 +45,29 @@ export async function findByProviderRef(providerRef: string): Promise<Booking | 
   return row ?? null;
 }
 
+export async function findByCustomerId(
+  customerId: string,
+  filters: { status?: string },
+  pagination: { limit: number; offset: number }
+) {
+  const { limit, offset } = pagination;
+  const conditions = [eq(bookingsTable.customerId, customerId)];
+  if (filters.status) conditions.push(eq(bookingsTable.status, filters.status));
+
+  const whereClause = and(...conditions);
+
+  const [rows, countRows] = await Promise.all([
+    db.select().from(bookingsTable).where(whereClause).orderBy(desc(bookingsTable.createdAt)).limit(limit).offset(offset),
+    db.select({ count: sql<number>`count(*)` }).from(bookingsTable).where(whereClause),
+  ]);
+
+  return { rows, total: Number(countRows[0]?.count ?? 0) };
+}
+
 export async function create(data: {
   operatorId: string;
   operatorName: string;
+  customerId?: string | null;
   passengerName: string;
   passengerPhone: string;
   tripId: string;
@@ -73,5 +93,35 @@ export async function create(data: {
 
 export async function updateStatus(id: string, status: string): Promise<Booking | null> {
   const [row] = await db.update(bookingsTable).set({ status }).where(eq(bookingsTable.id, id)).returning();
+  return row ?? null;
+}
+
+export async function updateStatusConditional(
+  id: string,
+  newStatus: string,
+  expectedCurrentStatuses: string[]
+): Promise<Booking | null> {
+  const statusConditions = expectedCurrentStatuses.map(s => eq(bookingsTable.status, s));
+  const [row] = await db.update(bookingsTable)
+    .set({ status: newStatus })
+    .where(and(eq(bookingsTable.id, id), sql`(${sql.join(statusConditions, sql` OR `)})`))
+    .returning();
+  return row ?? null;
+}
+
+export async function updatePayment(id: string, data: {
+  status: string;
+  paymentMethod: string;
+  providerRef?: string | null;
+  discountAmount?: string | null;
+  finalAmount?: string | null;
+  voucherCode?: string | null;
+}, expectedCurrentStatuses?: string[]): Promise<Booking | null> {
+  const conditions = [eq(bookingsTable.id, id)];
+  if (expectedCurrentStatuses?.length) {
+    const statusConditions = expectedCurrentStatuses.map(s => eq(bookingsTable.status, s));
+    conditions.push(sql`(${sql.join(statusConditions, sql` OR `)})`);
+  }
+  const [row] = await db.update(bookingsTable).set(data).where(and(...conditions)).returning();
   return row ?? null;
 }

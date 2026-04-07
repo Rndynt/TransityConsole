@@ -37,8 +37,13 @@ Internal admin dashboard and API gateway for the Transity ecosystem (Indonesian 
 - `GET /api/gateway/cities` — aggregated cities from all operators (cached 5min)
 - `GET /api/gateway/operators/:operatorSlug/info` — operator brand info (cached 15min)
 - `GET /api/gateway/service-lines` — aggregated service lines (cached 5min)
-- `POST /api/gateway/bookings` — create booking (invalidates seatmap cache on success)
+- `POST /api/gateway/bookings` — create booking, paymentMethod opsional (hold-only jika tidak ada). Invalidates seatmap cache on success
+- `GET /api/gateway/bookings` — list bookings per customer (JWT required), includes holdExpiresAt
 - `GET /api/gateway/bookings/:bookingId` — get booking by ID
+- `POST /api/gateway/bookings/:bookingId/pay` — bayar booking held (forward ke Terminal), mendukung voucherCode
+- `POST /api/gateway/bookings/:bookingId/cancel` — cancel booking held/pending (forward ke Terminal)
+- `GET /api/gateway/payments/methods` — list metode pembayaran (static list)
+- `POST /api/gateway/vouchers/validate` — validasi voucher platform Transity
 - `POST /api/gateway/payments/webhook` — forward payment webhook to terminal (HMAC-SHA256 signed)
 
 **Gateway caching** (per REQ_UPDATE_CONSOLE_SEATMAP_CACHE):
@@ -57,7 +62,7 @@ Internal admin dashboard and API gateway for the Transity ecosystem (Indonesian 
 - `PUT /api/gateway/auth/profile` — update fullName/phone (Bearer token)
 - `POST /api/gateway/auth/change-password` — change password (Bearer token)
 
-**Database tables**: `operators` (+ `webhookSecret`), `terminal_health`, `bookings` (+ `providerRef`, `holdExpiresAt`, `paymentMethod`, `passengersJson`, `originStopId`, `destinationStopId`, `serviceDate`), `admin_users`, `api_keys`, `customers` (fullName, email, phone, passwordHash, avatarUrl, isVerified, lastLoginAt)
+**Database tables**: `operators` (+ `webhookSecret`), `terminal_health`, `bookings` (+ `customerId`, `providerRef`, `holdExpiresAt`, `paymentMethod`, `discountAmount`, `finalAmount`, `voucherCode`, `passengersJson`, `originStopId`, `destinationStopId`, `serviceDate`), `admin_users`, `api_keys`, `customers` (fullName, email, phone, passwordHash, avatarUrl, isVerified, lastLoginAt), `vouchers` (code, discountType, discountValue, minPurchase, maxDiscount, validFrom, validUntil, usageLimit, usedCount, operatorId, active)
 
 ## Structure
 
@@ -98,7 +103,7 @@ Every package extends `tsconfig.base.json` which sets `composite: true`. The roo
 ### `apps/api-server` (`@workspace/api-server`)
 
 Fastify 5 API server. Logic is organized into domain modules in `src/modules/`:
-`analytics/`, `auth/`, `bookings/`, `gateway/`, `health/`, `operators/`, `terminals/`
+`analytics/`, `auth/`, `bookings/`, `customers/`, `gateway/`, `health/`, `operators/`, `terminals/`, `vouchers/`
 
 Each module follows Repository/Service/Routes pattern.
 

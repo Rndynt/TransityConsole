@@ -13,7 +13,9 @@
    - [GET /api/app/cities — Daftar Kota](#get-apiappcities--daftar-kota)
    - [GET /api/app/trips/search — Pencarian Trip](#get-apiapptripssearch--pencarian-trip)
    - [GET /api/app/trips/:tripId — Detail Trip](#get-apiapptripstripid--detail-trip)
-   - [POST /api/app/bookings — Buat Booking](#post-apiappbookings--buat-booking)
+   - [POST /api/app/bookings — Buat Booking (Hold)](#post-apiappbookings--buat-booking-hold)
+   - [POST /api/app/bookings/:bookingId/pay — Bayar Booking](#post-apiappbookingsbookingidpay--bayar-booking)
+   - [POST /api/app/bookings/:bookingId/cancel — Batalkan Booking](#post-apiappbookingsbookingidcancel--batalkan-booking)
 4. [Aturan Response](#aturan-response)
 5. [Contoh Implementasi](#contoh-implementasi)
 6. [Checklist Sebelum Registrasi](#checklist-sebelum-registrasi)
@@ -275,9 +277,9 @@ X-Service-Key: <service-key>
 
 ---
 
-### POST /api/app/bookings — Buat Booking
+### POST /api/app/bookings — Buat Booking (Hold)
 
-Menerima dan memproses booking dari Console (yang diteruskan dari TransityApp).
+Menerima dan memproses booking dari Console (yang diteruskan dari TransityApp). Booking dibuat dalam status **held** (ditahan) — belum dibayar. Pembayaran dilakukan terpisah melalui endpoint `/pay`.
 
 **Request dari Console:**
 ```http
@@ -290,42 +292,57 @@ Content-Type: application/json
 ```json
 {
   "tripId": "trip-001",
-  "passengerName": "Budi Santoso",
-  "passengerPhone": "081234567890",
-  "seatNumbers": ["A1", "A2"],
-  "totalAmount": 100000
+  "serviceDate": "2026-04-15",
+  "originStopId": "stop-jkt-01",
+  "destinationStopId": "stop-bdg-01",
+  "originSeq": 1,
+  "destinationSeq": 3,
+  "passengers": [
+    { "fullName": "Budi Santoso", "phone": "081234567890", "seatNo": "A1" },
+    { "fullName": "Siti Rahayu", "phone": "", "seatNo": "A2" }
+  ]
 }
 ```
 
 | Field | Tipe | Wajib | Keterangan |
 |---|---|---|---|
 | `tripId` | `string` | ✅ | ID trip di sistem terminal (tanpa prefix operator) |
-| `passengerName` | `string` | ✅ | Nama penumpang |
-| `passengerPhone` | `string` | ✅ | Nomor telepon penumpang |
-| `seatNumbers` | `string[]` | — | Kursi yang dipilih (bisa kosong) |
-| `totalAmount` | `number` | ✅ | Total harga yang dibayar penumpang |
+| `serviceDate` | `string` | ✅ | Tanggal perjalanan format `YYYY-MM-DD` |
+| `originStopId` | `string` | ✅ | ID stop keberangkatan |
+| `destinationStopId` | `string` | ✅ | ID stop tujuan |
+| `originSeq` | `number` | ✅ | Sequence stop asal |
+| `destinationSeq` | `number` | ✅ | Sequence stop tujuan |
+| `passengers` | `array` | ✅ | Daftar penumpang, masing-masing wajib `fullName` dan `seatNo` |
+| `paymentMethod` | `string` | — | Opsional. Jika tidak dikirim, booking harus dibuat dalam status `held` |
 
-> **Catatan `totalAmount`:** Ini adalah harga yang sudah termasuk markup Console. Terminal bisa menyimpannya sebagai referensi atau mengabaikannya.
+> **Catatan:** Jika `paymentMethod` tidak ada, terminal **wajib** membuat booking dengan status `held` dan mengembalikan `holdExpiresAt` (waktu kadaluarsa hold). Jika `paymentMethod` ada, terminal bisa langsung memproses pembayaran.
 
 **Response `200 OK` atau `201 Created`:**
 
-Terminal harus mengembalikan ID booking yang dibuat di sistemnya:
-
 ```json
 {
-  "id": "NSH-2026-001234"
+  "id": "NSH-2026-001234",
+  "status": "held",
+  "totalAmount": 200000,
+  "holdExpiresAt": "2026-04-15T10:20:00Z",
+  "passengers": [
+    { "passengerId": "p-001", "fullName": "Budi Santoso", "seatNo": "A1" },
+    { "passengerId": "p-002", "fullName": "Siti Rahayu", "seatNo": "A2" }
+  ]
 }
 ```
 
-atau:
+Console menerima field `id` atau `bookingId`. ID ini disimpan sebagai `externalBookingId` di database Console untuk keperluan rekonsiliasi.
 
-```json
-{
-  "bookingId": "NSH-2026-001234"
-}
-```
-
-Console menerima kedua field name (`id` atau `bookingId`). ID ini akan disimpan sebagai `externalBookingId` di database Console untuk keperluan rekonsiliasi.
+| Field Response | Tipe | Wajib | Keterangan |
+|---|---|---|---|
+| `id` atau `bookingId` | `string` | ✅ | ID booking di sistem terminal |
+| `status` | `string` | ✅ | `held`, `pending`, atau `confirmed` |
+| `totalAmount` | `number` | ✅ | Total harga |
+| `holdExpiresAt` | `string` | — | ISO 8601. Wajib jika status `held` |
+| `passengers` | `array` | — | Data penumpang yang sudah diproses |
+| `paymentIntent` | `object` | — | Jika pembayaran langsung diproses |
+| `qrData` | `array` | — | QR code per penumpang (jika ada) |
 
 **Jika booking gagal (misal kursi sudah tidak tersedia):**
 ```http
@@ -335,6 +352,85 @@ HTTP 422 Unprocessable Entity
   "error": "Seats A1 and A2 are no longer available"
 }
 ```
+
+---
+
+### POST /api/app/bookings/:bookingId/pay — Bayar Booking
+
+Memproses pembayaran untuk booking yang statusnya `held`. Console memanggil endpoint ini setelah customer memilih metode pembayaran di TransityApp.
+
+**Request dari Console:**
+```http
+POST {apiUrl}/api/app/bookings/NSH-2026-001234/pay
+X-Service-Key: <service-key>
+Content-Type: application/json
+```
+
+**Request Body:**
+```json
+{
+  "paymentMethod": "QRIS",
+  "amount": 150000
+}
+```
+
+| Field | Tipe | Wajib | Keterangan |
+|---|---|---|---|
+| `paymentMethod` | `string` | ✅ | Metode pembayaran (QRIS, GOPAY, OVO, dll) |
+| `amount` | `number` | ✅ | Jumlah yang dibayar (bisa lebih kecil dari totalAmount jika ada diskon Console) |
+
+**Response `200 OK`:**
+```json
+{
+  "status": "confirmed",
+  "paymentIntent": {
+    "paymentId": "pay-xxx",
+    "providerRef": "provider-xxx",
+    "method": "QRIS",
+    "amount": 150000
+  },
+  "qrData": [
+    {
+      "passengerId": "p-001",
+      "seatNo": "A1",
+      "qrToken": "...",
+      "qrPayload": "..."
+    }
+  ]
+}
+```
+
+| Field Response | Tipe | Wajib | Keterangan |
+|---|---|---|---|
+| `status` | `string` | ✅ | Status setelah bayar: `confirmed`, `pending` |
+| `paymentIntent` | `object` | — | Detail pembayaran (paymentId, providerRef, method, amount) |
+| `qrData` | `array` | — | QR boarding pass per penumpang |
+
+**Response `400`:** Booking bukan status `held` atau `holdExpiresAt` sudah lewat.
+**Response `404`:** Booking tidak ditemukan.
+
+---
+
+### POST /api/app/bookings/:bookingId/cancel — Batalkan Booking
+
+Membatalkan booking yang statusnya `held` atau `pending`. Console memanggil endpoint ini saat customer membatalkan booking di TransityApp.
+
+**Request dari Console:**
+```http
+POST {apiUrl}/api/app/bookings/NSH-2026-001234/cancel
+X-Service-Key: <service-key>
+Content-Type: application/json
+```
+
+**Response `200 OK`:**
+```json
+{
+  "status": "cancelled"
+}
+```
+
+**Response `400`:** Booking tidak bisa dibatalkan (sudah `confirmed` atau `completed`).
+**Response `404`:** Booking tidak ditemukan.
 
 > **Catatan toleransi kegagalan:** Jika terminal tidak merespons dalam 8 detik atau mengembalikan error, Console tetap menyimpan booking dengan status `pending`. Booking ini bisa direkonsiliasi secara manual melalui dashboard admin TransityConsole.
 
@@ -422,7 +518,9 @@ Sebelum mendaftarkan terminal ke TransityConsole, pastikan semua endpoint beriku
 - [ ] `GET /api/app/trips/search` tanpa hasil → mengembalikan `{ trips: [] }` bukan error
 - [ ] `GET /api/app/trips/:tripId` → mengembalikan detail trip
 - [ ] `GET /api/app/trips/id-tidak-ada` → mengembalikan `404`
-- [ ] `POST /api/app/bookings` → membuat booking dan mengembalikan `id` atau `bookingId`
+- [ ] `POST /api/app/bookings` → membuat booking (hold) dan mengembalikan `id`, `status`, `totalAmount`, `holdExpiresAt`
+- [ ] `POST /api/app/bookings/:bookingId/pay` → memproses pembayaran booking held
+- [ ] `POST /api/app/bookings/:bookingId/cancel` → membatalkan booking held/pending
 - [ ] Semua endpoint menggunakan `Content-Type: application/json`
 - [ ] URL dasar terminal dapat diakses dari jaringan publik (bukan localhost)
 
