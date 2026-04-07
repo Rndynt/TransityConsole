@@ -11,6 +11,12 @@
 3. [Autentikasi](#autentikasi)
 4. [Customer Auth Endpoints](#customer-auth-endpoints)
 5. [Gateway Endpoints](#gateway-endpoints)
+   - [Pencarian Trip & Info](#get-gatewaycities)
+   - [Booking](#post-gatewaybookings)
+   - [Pembayaran](#post-gatewaybookingsbookingidpay)
+   - [Cancel](#post-gatewaybookingsbookingidcancel)
+   - [Payment Methods](#get-gatewaypaymentsmethods)
+   - [Voucher Validation](#post-gatewayvouchersvalidate)
 6. [Format tripId](#format-tripid)
 7. [Virtual Trip & Materialisasi](#virtual-trip--materialisasi)
 8. [Alur Booking End-to-End](#alur-booking-end-to-end)
@@ -482,6 +488,7 @@ Membuat booking baru. Gateway meneruskan ke terminal operator yang sesuai berdas
 **Request:**
 ```http
 POST /api/gateway/bookings
+Authorization: Bearer <customer-jwt>
 Content-Type: application/json
 
 {
@@ -494,8 +501,7 @@ Content-Type: application/json
   "passengers": [
     { "fullName": "Budi Santoso", "phone": "081234567890", "seatNo": "1A" },
     { "fullName": "Siti Rahayu", "seatNo": "1C" }
-  ],
-  "paymentMethod": "qr"
+  ]
 }
 ```
 
@@ -508,7 +514,7 @@ Content-Type: application/json
 | `originSeq` | `number` | Ya | Sequence stop asal |
 | `destinationSeq` | `number` | Ya | Sequence stop tujuan |
 | `passengers` | `array` | Ya | Minimal 1 penumpang, masing-masing wajib `fullName` dan `seatNo` |
-| `paymentMethod` | `string` | — | Opsional. Jika tidak diisi, booking dibuat dalam status `held`. Contoh: `"QRIS"`, `"GOPAY"`, `"OVO"`, `"DANA"` |
+| `paymentMethod` | `string` | — | **Jangan kirim.** Biarkan kosong agar booking masuk status `pending` (kursi di-hold 15 menit). User pilih metode bayar dan bayar via `/pay` terpisah. Jika tetap dikirim, Terminal akan langsung proses pembayaran |
 
 **Response `201 Created`:**
 ```json
@@ -518,36 +524,51 @@ Content-Type: application/json
   "operatorId": "uuid-...",
   "operatorName": "Nusa Shuttle",
   "operatorSlug": "nusa-shuttle",
-  "status": "held",
+  "status": "pending",
   "totalAmount": "200000",
-  "holdExpiresAt": "2026-04-15T10:20:00Z",
-  "paymentIntent": {
-    "paymentId": "...",
-    "method": "qr",
-    "amount": "200000"
-  },
+  "holdExpiresAt": "2026-04-15T10:15:00Z",
   "qrData": [
     {
-      "passengerId": "...",
+      "passengerId": "pax-uuid-1",
       "seatNo": "1A",
       "fullName": "Budi Santoso",
-      "qrToken": "...",
-      "qrPayload": "..."
+      "qrToken": "TRN-K-00000123-1A",
+      "qrPayload": "{...}"
+    },
+    {
+      "passengerId": "pax-uuid-2",
+      "seatNo": "1C",
+      "fullName": "Siti Rahayu",
+      "qrToken": "TRN-K-00000123-1C",
+      "qrPayload": "{...}"
     }
   ],
-  "passengers": [ ... ],
+  "passengers": [
+    { "passengerId": "pax-uuid-1", "fullName": "Budi Santoso", "seatNo": "1A" },
+    { "passengerId": "pax-uuid-2", "fullName": "Siti Rahayu", "seatNo": "1C" }
+  ],
   "tripId": "nusa-shuttle:trip-001"
 }
 ```
+
+| Field Response | Tipe | Keterangan |
+|---|---|---|
+| `bookingId` | `string` | ID booking di Console (UUID) — gunakan untuk pay, cancel, get |
+| `externalBookingId` | `string` | ID booking di Terminal (untuk referensi) |
+| `status` | `string` | Status awal: `"pending"` (tanpa paymentMethod) atau `"confirmed"` (dengan paymentMethod) |
+| `holdExpiresAt` | `string \| null` | Batas waktu hold. Tampilkan countdown ke user. `null` jika sudah confirmed |
+| `totalAmount` | `string` | Total harga yang harus dibayar (Rupiah) |
+| `qrData` | `array` | QR boarding pass per penumpang — tampilkan setelah pembayaran berhasil |
 
 **Status booking:**
 
 | Status | Keterangan |
 |---|---|
-| `held` | Booking ditahan, menunggu pembayaran. Ada batas waktu (`holdExpiresAt`). |
-| `confirmed` | Pembayaran berhasil, booking terkonfirmasi. |
-| `cancelled` | Booking dibatalkan (hold expired atau pembayaran gagal). |
-| `completed` | Perjalanan sudah selesai. |
+| `pending` | Booking baru dibuat, kursi di-hold 15 menit, menunggu pembayaran via `/pay` |
+| `held` | Alias dari pending (beberapa operator menggunakan istilah ini) |
+| `confirmed` | Pembayaran berhasil, booking terkonfirmasi, QR valid untuk boarding |
+| `cancelled` | Booking dibatalkan (user cancel, hold expired, atau pembayaran gagal) |
+| `completed` | Perjalanan sudah selesai |
 
 ---
 
@@ -608,56 +629,87 @@ GET /api/gateway/bookings/uuid-booking-...
 
 ### POST /gateway/bookings/:bookingId/pay
 
-Membayar booking yang statusnya `held`. Console memforward ke Terminal operator.
+Membayar booking yang statusnya `held` atau `pending`. Console memforward ke Terminal operator.
+
+Voucher bisa dari dua sumber:
+- **Platform voucher** (Transity) — Console validasi dan terapkan diskon sendiri
+- **Operator voucher** (Terminal) — Console forward `voucherCode` ke Terminal, Terminal validasi dan hitung diskon
+
+Console otomatis mendeteksi sumber voucher: cek di platform dulu, jika tidak ditemukan maka forward ke operator.
 
 **Request:**
 ```http
 POST /api/gateway/bookings/uuid-booking-.../pay
+Authorization: Bearer <customer-jwt>
 Content-Type: application/json
 
 {
-  "paymentMethod": "QRIS",
-  "voucherCode": "PROMO50K"
+  "paymentMethod": "qr",
+  "voucherCode": "DISKON10"
 }
 ```
 
 | Field | Tipe | Wajib | Keterangan |
 |---|---|---|---|
-| `paymentMethod` | `string` | Ya | Metode pembayaran (dari `/gateway/payments/methods`) |
-| `voucherCode` | `string` | — | Kode voucher (opsional, divalidasi otomatis) |
+| `paymentMethod` | `string` | Ya | Kode metode pembayaran dari `/gateway/payments/methods` (contoh: `"qr"`, `"ewallet"`, `"bank"`) |
+| `voucherCode` | `string` | — | Kode voucher (opsional). Bisa voucher platform Transity atau voucher operator |
 
 **Response `200 OK`:**
 ```json
 {
   "bookingId": "uuid-...",
+  "externalBookingId": "terminal-booking-id",
   "status": "confirmed",
-  "paymentMethod": "QRIS",
+  "paymentMethod": "qr",
   "totalAmount": "200000",
-  "discountAmount": "50000",
-  "finalAmount": "150000",
-  "paymentIntent": { ... },
-  "qrData": [ ... ]
+  "discountAmount": "17000",
+  "finalAmount": "183000",
+  "paymentIntent": {
+    "paymentId": "payment-uuid-1",
+    "providerRef": "PAY-ABC123DEF456GHI7890ABCD",
+    "method": "qr",
+    "amount": "183000"
+  },
+  "qrData": [
+    {
+      "passengerId": "pax-uuid-1",
+      "seatNo": "1A",
+      "fullName": "Budi Santoso",
+      "qrToken": "TRN-K-00000123-1A",
+      "qrPayload": "{...}"
+    }
+  ]
 }
 ```
+
+| Field Response | Tipe | Keterangan |
+|---|---|---|
+| `status` | `string` | `"confirmed"` jika berhasil |
+| `totalAmount` | `string` | Total asli sebelum diskon (Rupiah) |
+| `discountAmount` | `string \| null` | Jumlah diskon yang diterapkan. `null` jika tanpa voucher |
+| `finalAmount` | `string` | Jumlah yang benar-benar dibayar: `totalAmount - discountAmount` |
+| `paymentIntent.providerRef` | `string` | Referensi pembayaran unik (`PAY-XXXX`) — simpan untuk rekonsiliasi |
 
 **Error:**
 
 | Status | Code | Keterangan |
 |---|---|---|
 | `400` | `INVALID_STATUS` | Booking bukan status `held`/`pending` |
-| `400` | `HOLD_EXPIRED` | Hold sudah kadaluarsa |
-| `400` | `VOUCHER_INVALID` | Voucher tidak valid |
+| `400` | `HOLD_EXPIRED` | Hold sudah kadaluarsa, booking otomatis dibatalkan |
+| `400` | `VOUCHER_INVALID` | Voucher tidak valid, expired, atau sudah habis |
 | `404` | `NOT_FOUND` | Booking tidak ditemukan |
+| `502` | `TERMINAL_ERROR` | Terminal operator error saat memproses pembayaran |
 
 ---
 
 ### POST /gateway/bookings/:bookingId/cancel
 
-Membatalkan booking yang statusnya `held` atau `pending`. Console memforward ke Terminal operator.
+Membatalkan booking yang statusnya `held`, `pending`, atau `confirmed`. Console memforward ke Terminal operator.
 
 **Request:**
 ```http
 POST /api/gateway/bookings/uuid-booking-.../cancel
+Authorization: Bearer <customer-jwt>
 ```
 
 **Response `200 OK`:**
@@ -669,41 +721,65 @@ POST /api/gateway/bookings/uuid-booking-.../cancel
 }
 ```
 
-**Error:** `400` jika booking sudah `confirmed`/`completed`. `404` jika tidak ditemukan.
+**Error:**
+
+| Status | Code | Keterangan |
+|---|---|---|
+| `400` | `INVALID_STATUS` | Booking sudah `cancelled` atau `completed` |
+| `404` | `NOT_FOUND` | Booking tidak ditemukan |
+| `502` | `TERMINAL_ERROR` | Terminal operator error saat memproses pembatalan |
 
 ---
 
 ### GET /gateway/payments/methods
 
-Daftar metode pembayaran yang tersedia.
+Daftar metode pembayaran yang tersedia dari operator. Setiap operator bisa punya metode pembayaran berbeda.
 
-**Request:**
+**Request (dengan `operatorSlug`):**
 ```http
-GET /api/gateway/payments/methods
+GET /api/gateway/payments/methods?operatorSlug=nusa-shuttle
 ```
 
+**Request (dengan `bookingId` — otomatis deteksi operator):**
+```http
+GET /api/gateway/payments/methods?bookingId=uuid-booking-...
+```
+
+| Parameter | Tipe | Wajib | Keterangan |
+|---|---|---|---|
+| `operatorSlug` | `string` | * | Slug operator dari search result. Wajib jika `bookingId` tidak disertakan |
+| `bookingId` | `string` | * | ID booking — operator dideteksi otomatis dari data booking |
+
+> Salah satu dari `operatorSlug` atau `bookingId` **wajib** diisi.
+
 **Response `200 OK`:**
+
+Response diproxy langsung dari Terminal operator. Format bisa bervariasi antar operator, tapi umumnya:
+
 ```json
 {
   "methods": [
-    { "id": "QRIS", "name": "QRIS", "type": "qr" },
-    { "id": "GOPAY", "name": "GoPay", "type": "ewallet" },
-    { "id": "OVO", "name": "OVO", "type": "ewallet" },
-    { "id": "DANA", "name": "DANA", "type": "ewallet" },
-    { "id": "SHOPEEPAY", "name": "ShopeePay", "type": "ewallet" },
-    { "id": "VA_BCA", "name": "VA BCA", "type": "va" },
-    { "id": "VA_MANDIRI", "name": "VA Mandiri", "type": "va" },
-    { "id": "VA_BNI", "name": "VA BNI", "type": "va" },
-    { "id": "BANK_TRANSFER", "name": "Bank Transfer", "type": "transfer" }
+    { "code": "qr", "name": "QRIS", "description": "Pembayaran via QRIS" },
+    { "code": "ewallet", "name": "E-Wallet", "description": "Pembayaran via e-wallet (GoPay, OVO, DANA)" },
+    { "code": "bank", "name": "Bank Transfer", "description": "Transfer bank (VA)" }
   ]
 }
 ```
+
+> **Catatan:** Response diproxy langsung dari Terminal — schema bisa berbeda antar operator. Field `code` dan `name` umumnya selalu ada. Gunakan nilai `code` sebagai `paymentMethod` saat bayar.
+
+**Catatan:** Daftar metode pembayaran bersifat **dinamis per operator**. Selalu ambil dari endpoint ini sebelum menampilkan pilihan bayar ke user. Jangan hardcode daftar metode di frontend.
 
 ---
 
 ### POST /gateway/vouchers/validate
 
-Validasi kode voucher sebelum pembayaran. Voucher ini dari platform Transity (bukan dari operator).
+Validasi kode voucher sebelum pembayaran. Mendukung **dua jenis voucher**:
+
+1. **Voucher platform Transity** — dikelola oleh TransityConsole (berlaku lintas operator)
+2. **Voucher operator** — dikelola oleh masing-masing Terminal (khusus operator tertentu)
+
+Console akan otomatis mencari di platform dulu. Jika tidak ditemukan, akan dicek di operator (jika `tripId` atau `operatorSlug` disertakan).
 
 **Request:**
 ```http
@@ -711,7 +787,7 @@ POST /api/gateway/vouchers/validate
 Content-Type: application/json
 
 {
-  "code": "PROMO50K",
+  "code": "DISKON10",
   "tripId": "nusa-shuttle:trip-001",
   "totalAmount": 200000
 }
@@ -719,28 +795,70 @@ Content-Type: application/json
 
 | Field | Tipe | Wajib | Keterangan |
 |---|---|---|---|
-| `code` | `string` | Ya | Kode voucher |
-| `tripId` | `string` | — | ID trip (untuk cek voucher per-operator) |
-| `totalAmount` | `number` | Ya | Total harga sebelum diskon |
+| `code` | `string` | Ya | Kode voucher (case-insensitive) |
+| `tripId` | `string` | — | ID trip — digunakan untuk mendeteksi operator jika voucher bukan dari platform |
+| `operatorSlug` | `string` | — | Slug operator. Alternatif jika tidak punya `tripId` |
+| `totalAmount` | `number` | — | Total harga sebelum diskon. Jika dikirim, response akan menyertakan `calculatedDiscount` |
 
-**Response `200 OK` (valid):**
+**Response `200 OK` (voucher platform valid):**
 ```json
 {
   "valid": true,
   "discountType": "fixed",
   "discountValue": 50000,
   "finalAmount": 150000,
-  "message": "Voucher berhasil diterapkan! Diskon Rp50.000"
+  "message": "Voucher berhasil diterapkan! Diskon Rp50.000",
+  "source": "platform"
 }
 ```
 
-**Response `200 OK` (tidak valid):**
+**Response `200 OK` (voucher operator valid):**
 ```json
 {
-  "valid": false,
-  "message": "Kode voucher tidak valid atau sudah kadaluarsa."
+  "valid": true,
+  "code": "DISKON10",
+  "discountType": "percentage",
+  "discountValue": "10",
+  "minPurchase": "50000",
+  "maxDiscount": "25000",
+  "calculatedDiscount": 20000,
+  "source": "operator"
 }
 ```
+
+| Field | Tipe | Keterangan |
+|---|---|---|
+| `valid` | `boolean` | `true` jika voucher valid |
+| `source` | `string` | `"platform"` = voucher Transity, `"operator"` = voucher dari operator |
+| `discountType` | `string` | `"fixed"` (nominal tetap) atau `"percentage"` (persentase) |
+| `discountValue` | `number \| string` | Nilai diskon |
+| `minPurchase` | `string \| null` | Minimal pembelian (hanya operator voucher) |
+| `maxDiscount` | `string \| null` | Batas maksimal diskon (hanya operator voucher, tipe percentage) |
+| `calculatedDiscount` | `number \| null` | Jumlah diskon dihitung dari `totalAmount` (jika dikirim) |
+| `finalAmount` | `number` | Total setelah diskon (hanya platform voucher) |
+
+**Response (tidak valid):**
+
+Jika voucher tidak ditemukan di platform maupun operator:
+```json
+{
+  "error": "Voucher tidak ditemukan atau tidak berlaku.",
+  "code": "VOUCHER_INVALID"
+}
+```
+
+Jika terjadi error saat cek ke Terminal operator:
+```json
+{
+  "error": "Gagal memvalidasi voucher di operator.",
+  "code": "TERMINAL_ERROR"
+}
+```
+
+**Catatan untuk UI:**
+- Tampilkan informasi diskon ke user sebelum mereka konfirmasi pembayaran
+- Jika `source: "operator"`, gunakan `calculatedDiscount` untuk tampilkan potongan harga
+- Jika `source: "platform"`, gunakan `finalAmount` untuk tampilkan harga akhir
 
 ---
 
@@ -798,40 +916,75 @@ Home Page
   │ (cari: kota asal, kota tujuan, tanggal, penumpang)
   ▼
 GET /api/gateway/cities ──── Isi dropdown kota
-
-POST /api/gateway/trips/search ──── Tampilkan daftar trip
-  │ (pilih trip)
-  ▼
-[Jika trip virtual] POST /api/gateway/trips/materialize ──── Dapatkan tripId nyata
   │
   ▼
-GET /api/gateway/trips/{tripId}/seatmap ──── Pilih kursi
+GET /api/gateway/trips/search ──── Tampilkan daftar trip
+  │ (user pilih trip)
+  ▼
+[Jika isVirtual: true]
+  POST /api/gateway/trips/materialize ──── Dapatkan tripId nyata
   │
   ▼
-POST /api/gateway/bookings ──── Buat booking
+GET /api/gateway/trips/{tripId}/seatmap ──── Tampilkan denah kursi
+  │ (user pilih kursi + isi data penumpang)
+  ▼
+POST /api/gateway/bookings ──── Buat booking (TANPA paymentMethod)
+  │                               → status "held"/"pending", kursi ditahan 15 menit
+  │                               → simpan bookingId + holdExpiresAt
+  ▼
+Halaman Pembayaran
+  │
+  ├── GET /api/gateway/payments/methods?operatorSlug=... ──── Tampilkan pilihan bayar
+  │
+  ├── [Jika user punya voucher]
+  │   POST /api/gateway/vouchers/validate ──── Tampilkan info diskon
+  │
+  │ (user pilih metode bayar + konfirmasi)
+  ▼
+POST /api/gateway/bookings/{bookingId}/pay ──── Bayar booking
+  │   → { paymentMethod: "qr", voucherCode?: "DISKON10" }
+  │   → status "confirmed"
+  ▼
+Tampilkan QR boarding pass + konfirmasi pembayaran
   │
   ▼
-Tampilkan QR code + status pembayaran
+[Opsional] GET /api/gateway/bookings/{bookingId} ──── Cek status booking
   │
   ▼
-GET /api/gateway/bookings/{bookingId} ──── Polling status
+[Opsional] POST /api/gateway/bookings/{bookingId}/cancel ──── Batalkan booking
 ```
+
+> **Penting:** Jangan kirim `paymentMethod` saat create booking. Biarkan booking masuk status `held` dulu. User pilih metode bayar dan konfirmasi di halaman pembayaran, baru panggil `/pay`.
 
 ### Alur Teknis (Console ↔ Terminal)
 
+**Alur 1: Hold → Pay (Direkomendasikan)**
 ```
-1. TransityApp → POST /api/gateway/bookings → TransityConsole
-2. Console parse tripId → extract operatorSlug
-3. Console → POST /api/app/bookings → TransityTerminal (+ X-Service-Key)
-4. Terminal buat booking (status: "held") → response + paymentIntent + qrData
-5. Console simpan booking di database lokal
-6. Console → response ke TransityApp
-7. Penumpang bayar melalui payment provider
-8. Payment provider → POST /api/gateway/payments/webhook → Console
-9. Console update status booking lokal
+1.  TransityApp → POST /api/gateway/bookings (tanpa paymentMethod) → Console
+2.  Console parse tripId → extract operatorSlug → cari operator
+3.  Console → POST /api/app/bookings → Terminal (+ X-Service-Key, tanpa paymentMethod)
+4.  Terminal buat booking status "pending", hold kursi 15 menit
+5.  Console simpan booking di DB lokal (status "pending", customerId, holdExpiresAt)
+6.  Console → response ke TransityApp (bookingId, status, holdExpiresAt, qrData)
+7.  TransityApp tampilkan halaman pembayaran + countdown holdExpiresAt
+8.  TransityApp → GET /api/gateway/payments/methods → Console → Terminal
+9.  [Opsional] TransityApp → POST /api/gateway/vouchers/validate → Console
+10. User pilih metode bayar → TransityApp → POST /api/gateway/bookings/{id}/pay → Console
+11. Console → POST /api/app/bookings/{id}/pay → Terminal (+ paymentMethod, voucherCode?)
+12. Terminal proses pembayaran, update status "confirmed", lock kursi
+13. Console update DB lokal (status, paymentMethod, finalAmount, discountAmount)
+14. Console → response ke TransityApp (status "confirmed", paymentIntent, finalAmount)
+```
+
+**Alur 2: Payment Webhook (Alternatif)**
+```
+1-6. Sama seperti Alur 1
+7.  TransityApp arahkan user ke payment gateway eksternal
+8.  Payment gateway → POST /api/gateway/payments/webhook → Console
+9.  Console update status booking lokal
 10. Console sign payload dengan HMAC-SHA256(webhookSecret)
 11. Console → POST /api/app/payments/webhook → Terminal (+ X-Webhook-Signature)
-12. Terminal konfirmasi/batalkan booking
+12. Terminal konfirmasi/batalkan booking berdasarkan status webhook
 ```
 
 ---
@@ -1010,7 +1163,7 @@ async function materializeTrip(tripId: string, serviceDate: string) {
 }
 ```
 
-### Buat Booking
+### Buat Booking (Hold)
 
 ```typescript
 async function createBooking(params: {
@@ -1021,15 +1174,138 @@ async function createBooking(params: {
   originSeq: number;
   destinationSeq: number;
   passengers: Array<{ fullName: string; phone?: string; seatNo: string }>;
-  paymentMethod: string;
 }) {
+  // JANGAN kirim paymentMethod — biarkan booking masuk status "held"/"pending"
   const res = await fetch(`${API_BASE}/gateway/bookings`, {
     method: "POST",
     headers: gatewayHeaders(),
     body: JSON.stringify(params),
   });
   if (!res.ok) throw await res.json();
-  return res.json(); // { bookingId, status, qrData, ... }
+  return res.json();
+  // { bookingId, status: "pending", holdExpiresAt, totalAmount, qrData, passengers, ... }
+}
+```
+
+### Ambil Metode Pembayaran
+
+```typescript
+async function getPaymentMethods(operatorSlug: string) {
+  const res = await fetch(
+    `${API_BASE}/gateway/payments/methods?operatorSlug=${encodeURIComponent(operatorSlug)}`,
+    { headers: gatewayHeaders() }
+  );
+  if (!res.ok) throw await res.json();
+  const data = await res.json();
+  // Response diproxy dari Terminal — schema bisa bervariasi per operator
+  // Umumnya: { methods: [{ code, name, description?, active? }] }
+  return data.methods ?? data;
+}
+```
+
+### Validasi Voucher
+
+```typescript
+async function validateVoucher(code: string, tripId: string, totalAmount: number) {
+  const res = await fetch(`${API_BASE}/gateway/vouchers/validate`, {
+    method: "POST",
+    headers: gatewayHeaders(),
+    body: JSON.stringify({ code, tripId, totalAmount }),
+  });
+  if (!res.ok) {
+    const err = await res.json();
+    return { valid: false, error: err.error };
+  }
+  return res.json();
+  // Platform voucher:  { valid: true, discountType, discountValue, finalAmount, source: "platform" }
+  // Operator voucher:  { valid: true, discountType, discountValue, calculatedDiscount, source: "operator" }
+}
+```
+
+### Bayar Booking
+
+```typescript
+async function payBooking(bookingId: string, paymentMethod: string, voucherCode?: string) {
+  const body: Record<string, string> = { paymentMethod };
+  if (voucherCode) body.voucherCode = voucherCode;
+
+  const res = await fetch(`${API_BASE}/gateway/bookings/${bookingId}/pay`, {
+    method: "POST",
+    headers: gatewayHeaders(),
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw await res.json();
+  return res.json();
+  // { bookingId, status: "confirmed", totalAmount, discountAmount, finalAmount, paymentIntent, qrData }
+}
+```
+
+### Batalkan Booking
+
+```typescript
+async function cancelBooking(bookingId: string) {
+  const res = await fetch(`${API_BASE}/gateway/bookings/${bookingId}/cancel`, {
+    method: "POST",
+    headers: gatewayHeaders(),
+  });
+  if (!res.ok) throw await res.json();
+  return res.json();
+  // { bookingId, status: "cancelled", message: "Booking berhasil dibatalkan." }
+}
+```
+
+### Contoh Flow Lengkap
+
+```typescript
+async function fullBookingFlow() {
+  // 1. Login
+  const auth = await login("budi@gmail.com", "rahasia123");
+  customerToken = auth.token;
+
+  // 2. Cari trip
+  const searchResult = await searchTrips("Jakarta", "Bandung", "2026-04-15", 2);
+  const trip = searchResult.trips[0];
+
+  // 3. Materialize jika virtual
+  let tripId = trip.tripId;
+  if (trip.isVirtual) {
+    const materialized = await materializeTrip(tripId, trip.serviceDate);
+    tripId = materialized.tripId;
+  }
+
+  // 4. Ambil seatmap
+  const seatmap = await getSeatmap(tripId, trip.origin.sequence, trip.destination.sequence);
+  // Tampilkan seatmap ke user, user pilih kursi
+
+  // 5. Buat booking (TANPA paymentMethod — hold saja)
+  const booking = await createBooking({
+    tripId,
+    serviceDate: trip.serviceDate,
+    originStopId: trip.origin.stopId,
+    destinationStopId: trip.destination.stopId,
+    originSeq: trip.origin.sequence,
+    destinationSeq: trip.destination.sequence,
+    passengers: [
+      { fullName: "Budi Santoso", phone: "081234567890", seatNo: "1A" },
+      { fullName: "Siti Rahayu", seatNo: "1C" },
+    ],
+  });
+  // booking.status === "pending", booking.holdExpiresAt = "2026-04-15T10:15:00Z"
+  // Tampilkan countdown dari holdExpiresAt
+
+  // 6. Ambil metode pembayaran (dari operator)
+  const methods = await getPaymentMethods(trip.operatorSlug);
+  // Tampilkan pilihan ke user
+
+  // 7. (Opsional) Validasi voucher
+  const voucher = await validateVoucher("DISKON10", tripId, parseFloat(booking.totalAmount));
+  // Tampilkan info diskon ke user
+
+  // 8. Bayar
+  const payResult = await payBooking(booking.bookingId, "qr", "DISKON10");
+  // payResult.status === "confirmed"
+  // payResult.finalAmount === jumlah yang dibayar setelah diskon
+  // Tampilkan QR boarding pass dari payResult.qrData
 }
 ```
 
@@ -1057,3 +1333,18 @@ A: Tidak. Trip virtual harus dimaterialisasi dulu via `POST /api/gateway/trips/m
 
 **Q: Apakah seatmap tersedia untuk trip virtual?**
 A: Tidak. Trip virtual mengembalikan 404 untuk seatmap. Gunakan field `vehicleClass` untuk menampilkan layout statis di frontend.
+
+**Q: Apa perbedaan voucher platform dan voucher operator?**
+A: Voucher platform dikelola oleh Transity (berlaku lintas operator). Voucher operator dikelola oleh masing-masing terminal (khusus untuk operator itu). Saat validasi atau pembayaran, Console otomatis mendeteksi sumber voucher. Response menyertakan `source: "platform"` atau `"operator"`.
+
+**Q: Apakah booking yang sudah confirmed bisa dibatalkan?**
+A: Ya. Booking berstatus `held`, `pending`, atau `confirmed` bisa dibatalkan via `POST /api/gateway/bookings/{id}/cancel`. Hanya `cancelled` dan `completed` yang tidak bisa dibatalkan.
+
+**Q: Kenapa `paymentMethod` tidak dikirim saat create booking?**
+A: Supaya kursi bisa di-hold dulu (15 menit) sementara user memilih metode pembayaran. Ini mencegah user kehilangan kursi saat masih browsing opsi pembayaran. Pembayaran dilakukan terpisah via `POST /gateway/bookings/{id}/pay`.
+
+**Q: Bagaimana jika hold expired sebelum user bayar?**
+A: Kursi otomatis dilepas oleh Terminal. Jika user mencoba bayar setelah expired, response error `400 HOLD_EXPIRED` dan booking otomatis dibatalkan di Console. User harus buat booking baru.
+
+**Q: Format `paymentMethod` seperti apa yang harus dikirim?**
+A: Gunakan nilai `code` dari response `GET /gateway/payments/methods` (contoh: `"qr"`, `"ewallet"`, `"bank"`). Jangan hardcode — selalu ambil dari endpoint karena setiap operator bisa punya metode berbeda.
