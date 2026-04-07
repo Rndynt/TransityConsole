@@ -8,6 +8,41 @@
 
 ---
 
+## Flow Booking dari Perspektif Customer TransityApp
+
+```
+Customer di TransityApp
+    │
+    │  1. Cari trip → pilih jadwal → pilih kursi
+    │
+    │  2. Masuk halaman pembayaran
+    │     ↓
+    │  Console: POST /api/app/bookings (TANPA paymentMethod)
+    │     → Terminal buat booking status "held", kursi ditahan
+    │     → Terminal return: { id, status: "held", totalAmount, holdExpiresAt }
+    │     → Customer lihat ringkasan booking + pilih metode bayar
+    │
+    │  3. Customer pilih metode bayar & konfirmasi
+    │     ↓
+    │  Console: POST /api/app/bookings/:id/pay { paymentMethod, amount }
+    │     → Terminal proses pembayaran, update status "confirmed"
+    │     → Terminal return: { status, paymentIntent, qrData }
+    │     → Customer terima boarding pass / QR code
+    │
+    │  4. (Opsional) Customer batal sebelum bayar
+    │     ↓
+    │  Console: POST /api/app/bookings/:id/cancel
+    │     → Terminal batalkan booking, lepas kursi
+    │     → Terminal return: { status: "cancelled" }
+```
+
+**Penting:**
+- `customerId` TIDAK dikirim ke Terminal. Itu data pelanggan Transity (Console/App level). Terminal hanya terima data operasional: trip, penumpang, kursi.
+- Console yang menyimpan relasi booking ↔ customer di database Console sendiri.
+- Diskon dari voucher platform Transity dihitung di Console. Terminal menerima `amount` yang sudah final (bisa lebih kecil dari `totalAmount` asli).
+
+---
+
 ## Ringkasan Gap
 
 | # | Masalah | Severity | File Terdampak |
