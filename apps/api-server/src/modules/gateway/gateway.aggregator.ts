@@ -811,6 +811,97 @@ export async function getServiceLines(): Promise<{ serviceLines: Array<Record<st
   return result;
 }
 
+export interface TripSnapshot {
+  originName: string;
+  originCity: string;
+  departAt: string | null;
+  destinationName: string;
+  destinationCity: string;
+  arriveAt: string | null;
+  patternName: string;
+  farePerPerson: number;
+}
+
+export function findTripInSearchCache(tripId: string): TripSnapshot | null {
+  for (const entry of cache.search.values()) {
+    if (Date.now() > entry.expiresAt) continue;
+    const trip = entry.data.trips.find((t) => t.tripId === tripId);
+    if (trip) {
+      const rawPatternName = (trip.raw as Record<string, unknown>)?.["patternName"];
+      return {
+        originName: trip.origin.stopName,
+        originCity: trip.origin.cityName,
+        departAt: trip.origin.departureTime,
+        destinationName: trip.destination.stopName,
+        destinationCity: trip.destination.cityName,
+        arriveAt: trip.destination.arrivalTime,
+        patternName: rawPatternName
+          ? String(rawPatternName)
+          : `${trip.origin.cityName} → ${trip.destination.cityName}`,
+        farePerPerson: trip.farePerPerson,
+      };
+    }
+  }
+  return null;
+}
+
+export async function getTripSnapshot(
+  tripId: string,
+  serviceDate: string,
+  originStopId: string,
+  destinationStopId: string
+): Promise<TripSnapshot | null> {
+  const cached = findTripInSearchCache(tripId);
+  if (cached) return cached;
+
+  try {
+    const detail = await getTripById(tripId, serviceDate);
+    if (!detail) return null;
+
+    const raw = detail["raw"] as Record<string, unknown> | undefined;
+    const stops = raw?.["stops"] as Array<Record<string, unknown>> | undefined;
+
+    let oName = "";
+    let oCity = "";
+    let oDepartAt: string | null = null;
+    let dName = "";
+    let dCity = "";
+    let dArriveAt: string | null = null;
+
+    if (stops && Array.isArray(stops)) {
+      const oStop = stops.find((s) => String(s["stopId"] ?? "") === originStopId);
+      const dStop = stops.find((s) => String(s["stopId"] ?? "") === destinationStopId);
+      if (oStop) {
+        oName = String(oStop["name"] ?? oStop["stopName"] ?? "");
+        oCity = String(oStop["city"] ?? oStop["cityName"] ?? "");
+        oDepartAt = oStop["departAt"] ?? oStop["departureTime"] ? String(oStop["departAt"] ?? oStop["departureTime"]) : null;
+      }
+      if (dStop) {
+        dName = String(dStop["name"] ?? dStop["stopName"] ?? "");
+        dCity = String(dStop["city"] ?? dStop["cityName"] ?? "");
+        dArriveAt = dStop["arriveAt"] ?? dStop["arrivalTime"] ? String(dStop["arriveAt"] ?? dStop["arrivalTime"]) : null;
+      }
+    }
+
+    const origin = detail["origin"] as TripStop | undefined;
+    const destination = detail["destination"] as TripStop | undefined;
+
+    if (!oName && origin) { oName = origin.stopName; oCity = origin.cityName; oDepartAt = origin.departureTime; }
+    if (!dName && destination) { dName = destination.stopName; dCity = destination.cityName; dArriveAt = destination.arrivalTime; }
+
+    const rawPatternName = raw?.["patternName"];
+    const patternName = rawPatternName ? String(rawPatternName) : `${oCity} → ${dCity}`;
+
+    return {
+      originName: oName, originCity: oCity, departAt: oDepartAt,
+      destinationName: dName, destinationCity: dCity, arriveAt: dArriveAt,
+      patternName, farePerPerson: Number(detail["farePerPerson"] ?? 0),
+    };
+  } catch {
+    return null;
+  }
+}
+
 export async function getReviews(tripId: string): Promise<Record<string, unknown> | null> {
   const resolved = await resolveOperator(tripId);
   if (!resolved) return null;

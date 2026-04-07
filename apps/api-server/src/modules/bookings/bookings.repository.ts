@@ -102,9 +102,26 @@ export async function create(data: {
   destinationStopId?: string | null;
   serviceDate?: string | null;
   idempotencyKey?: string | null;
+  originName?: string | null;
+  originCity?: string | null;
+  departAt?: string | null;
+  destinationName?: string | null;
+  destinationCity?: string | null;
+  arriveAt?: string | null;
+  patternName?: string | null;
+  farePerPerson?: string | null;
 }): Promise<Booking> {
   const [row] = await db.insert(bookingsTable).values(data).returning();
   return row;
+}
+
+export async function findExpiredHeldBookings(): Promise<Booking[]> {
+  return db.select().from(bookingsTable).where(
+    and(
+      eq(bookingsTable.status, "held"),
+      lte(bookingsTable.holdExpiresAt, new Date())
+    )
+  );
 }
 
 export async function updateFromTerminalSuccess(id: string, data: {

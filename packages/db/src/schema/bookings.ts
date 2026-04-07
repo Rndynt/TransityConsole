@@ -29,6 +29,14 @@ export const bookingsTable = pgTable("bookings", {
   destinationStopId: text("destination_stop_id"),
   serviceDate: date("service_date"),
   idempotencyKey: text("idempotency_key"),
+  originName: text("origin_name"),
+  originCity: text("origin_city"),
+  departAt: text("depart_at"),
+  destinationName: text("destination_name"),
+  destinationCity: text("destination_city"),
+  arriveAt: text("arrive_at"),
+  patternName: text("pattern_name"),
+  farePerPerson: numeric("fare_per_person", { precision: 12, scale: 2 }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 

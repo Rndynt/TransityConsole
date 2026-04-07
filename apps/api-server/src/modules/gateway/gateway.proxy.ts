@@ -1,6 +1,7 @@
 import crypto from "crypto";
 import * as operatorsRepo from "../operators/operators.repository.js";
 import * as bookingsRepo from "../bookings/bookings.repository.js";
+import * as aggregator from "./gateway.aggregator.js";
 
 const TERMINAL_TIMEOUT_MS = 8000;
 
@@ -87,19 +88,20 @@ export async function createBooking(req: BookingRequest): Promise<BookingResult>
     const existing = await bookingsRepo.findByIdempotencyKey(req.idempotencyKey);
     if (existing) {
       console.info(`[gateway] Idempotency key hit: ${req.idempotencyKey} → booking ${existing.id}`);
+      const detail = formatBookingDetail(existing);
       return {
-        bookingId: existing.id,
-        externalBookingId: existing.externalBookingId ?? null,
-        operatorId: existing.operatorId,
-        operatorName: existing.operatorName,
+        bookingId: detail.bookingId,
+        externalBookingId: detail.externalBookingId,
+        operatorId: detail.operatorId,
+        operatorName: detail.operatorName,
         operatorSlug,
-        status: existing.status,
-        totalAmount: String(existing.totalAmount),
-        holdExpiresAt: existing.holdExpiresAt?.toISOString() ?? null,
+        status: detail.status,
+        totalAmount: String(detail.totalAmount),
+        holdExpiresAt: detail.holdExpiresAt,
         paymentIntent: null,
         qrData: null,
-        passengers: existing.passengersJson ? JSON.parse(existing.passengersJson) : [],
-        tripId: existing.tripId,
+        passengers: detail.passengers,
+        tripId: detail.tripId,
         raw: null,
       };
     }
@@ -109,6 +111,25 @@ export async function createBooking(req: BookingRequest): Promise<BookingResult>
   const seatNumbers = req.passengers.map((p) => p.seatNo);
   const primaryPassenger = req.passengers[0];
 
+  // --- Look up trip snapshot data ---
+  let snapshot: aggregator.TripSnapshot | null = null;
+  try {
+    snapshot = await aggregator.getTripSnapshot(
+      req.tripId, req.serviceDate, req.originStopId, req.destinationStopId
+    );
+  } catch (e) {
+    console.warn("[gateway] Failed to get trip snapshot:", e instanceof Error ? e.message : e);
+  }
+
+  const calculatedTotal = snapshot
+    ? String(snapshot.farePerPerson * req.passengers.length)
+    : "0";
+  const calculatedCommission = snapshot
+    ? String(Math.round(snapshot.farePerPerson * req.passengers.length * commissionPct / 100))
+    : "0";
+
+  const holdExpiresAtDate = new Date(Date.now() + 20 * 60 * 1000);
+
   // --- Save booking to DB BEFORE calling terminal ---
   const booking = await bookingsRepo.create({
     operatorId: operator.id,
@@ -117,22 +138,30 @@ export async function createBooking(req: BookingRequest): Promise<BookingResult>
     passengerName: primaryPassenger?.fullName ?? "",
     passengerPhone: primaryPassenger?.phone ?? "",
     tripId: req.tripId,
-    origin: "",
-    destination: "",
+    origin: snapshot ? `${snapshot.originName}, ${snapshot.originCity}` : "",
+    destination: snapshot ? `${snapshot.destinationName}, ${snapshot.destinationCity}` : "",
     departureDate: req.serviceDate,
     seatNumbers,
-    totalAmount: "0",
-    commissionAmount: "0",
+    totalAmount: calculatedTotal,
+    commissionAmount: calculatedCommission,
     externalBookingId: null,
     status: "pending",
     providerRef: null,
-    holdExpiresAt: null,
+    holdExpiresAt: holdExpiresAtDate,
     paymentMethod: null,
     passengersJson: JSON.stringify(req.passengers),
     originStopId: req.originStopId,
     destinationStopId: req.destinationStopId,
     serviceDate: req.serviceDate,
     idempotencyKey: req.idempotencyKey ?? null,
+    originName: snapshot?.originName ?? null,
+    originCity: snapshot?.originCity ?? null,
+    departAt: snapshot?.departAt ?? null,
+    destinationName: snapshot?.destinationName ?? null,
+    destinationCity: snapshot?.destinationCity ?? null,
+    arriveAt: snapshot?.arriveAt ?? null,
+    patternName: snapshot?.patternName ?? null,
+    farePerPerson: snapshot ? String(snapshot.farePerPerson) : null,
   });
 
   const terminalPayload: Record<string, unknown> = {
@@ -176,8 +205,6 @@ export async function createBooking(req: BookingRequest): Promise<BookingResult>
   } catch (e) {
     if (e instanceof GatewayError) throw e;
 
-    // Terminal timed out or unreachable — mark booking as uncertain and return it
-    // so TransityApp can show it in "Pesanan Saya" and let user retry payment later
     await bookingsRepo.updateStatus(booking.id, "uncertain");
     console.warn(`[gateway] Terminal timeout for booking ${booking.id} — marked as uncertain`);
 
@@ -188,8 +215,8 @@ export async function createBooking(req: BookingRequest): Promise<BookingResult>
       operatorName: operator.name,
       operatorSlug: operator.slug,
       status: "uncertain",
-      totalAmount: "0",
-      holdExpiresAt: null,
+      totalAmount: calculatedTotal,
+      holdExpiresAt: holdExpiresAtDate.toISOString(),
       paymentIntent: null,
       qrData: null,
       passengers: req.passengers,
@@ -200,13 +227,20 @@ export async function createBooking(req: BookingRequest): Promise<BookingResult>
 
   // --- Terminal success: update booking record with terminal data ---
   const externalBookingId = terminalResponse["id"] ?? terminalResponse["bookingId"];
-  const totalAmount = String(terminalResponse["totalAmount"] ?? "0");
-  const holdExpiresAt = terminalResponse["holdExpiresAt"] ? String(terminalResponse["holdExpiresAt"]) : null;
+  const terminalAmount = terminalResponse["totalAmount"] ? String(terminalResponse["totalAmount"]) : null;
+  const totalAmount = (terminalAmount && parseFloat(terminalAmount) > 0)
+    ? terminalAmount
+    : (parseFloat(calculatedTotal) > 0 ? calculatedTotal : (terminalAmount ?? "0"));
+  if (parseFloat(totalAmount) <= 0) {
+    console.warn(`[gateway] Booking ${booking.id}: totalAmount is zero — snapshot and terminal both failed to provide pricing`);
+  }
+  const terminalHoldExpires = terminalResponse["holdExpiresAt"] ? String(terminalResponse["holdExpiresAt"]) : null;
+  const holdExpiresAt = terminalHoldExpires ?? holdExpiresAtDate.toISOString();
   const paymentIntent = (terminalResponse["paymentIntent"] as Record<string, unknown>) ?? null;
   const providerRef = paymentIntent ? String(paymentIntent["providerRef"] ?? "") : null;
   const qrData = (terminalResponse["qrData"] as unknown[]) ?? null;
-  const respPassengers = (terminalResponse["passengers"] as unknown[]) ?? [];
-  const bookingStatus = String(terminalResponse["status"] ?? "pending");
+  const respPassengers = (terminalResponse["passengers"] as unknown[]) ?? req.passengers;
+  const bookingStatus = String(terminalResponse["status"] ?? "held");
 
   const totalAmountNum = parseFloat(totalAmount) || 0;
   const commissionAmount = String(Math.round(totalAmountNum * commissionPct / 100));
@@ -215,7 +249,7 @@ export async function createBooking(req: BookingRequest): Promise<BookingResult>
     externalBookingId: externalBookingId ? String(externalBookingId) : null,
     totalAmount,
     commissionAmount,
-    holdExpiresAt: holdExpiresAt ? new Date(holdExpiresAt) : null,
+    holdExpiresAt: new Date(holdExpiresAt),
     status: bookingStatus,
     providerRef: providerRef || null,
   });
@@ -441,6 +475,10 @@ export async function getBookingById(bookingId: string, customerId?: string): Pr
     return null;
   }
 
+  return formatBookingDetail(booking);
+}
+
+function formatBookingDetail(booking: bookingsRepo.Booking) {
   return {
     bookingId: booking.id,
     externalBookingId: booking.externalBookingId ?? null,
@@ -462,6 +500,20 @@ export async function getBookingById(bookingId: string, customerId?: string): Pr
     passengers: booking.passengersJson ? JSON.parse(booking.passengersJson) : [],
     serviceDate: booking.serviceDate ?? booking.departureDate,
     createdAt: booking.createdAt.toISOString(),
+    origin: {
+      stopId: booking.originStopId ?? null,
+      name: booking.originName ?? "",
+      city: booking.originCity ?? "",
+      departAt: booking.departAt ?? null,
+    },
+    destination: {
+      stopId: booking.destinationStopId ?? null,
+      name: booking.destinationName ?? "",
+      city: booking.destinationCity ?? "",
+      arriveAt: booking.arriveAt ?? null,
+    },
+    patternName: booking.patternName ?? null,
+    farePerPerson: booking.farePerPerson ?? null,
   };
 }
 

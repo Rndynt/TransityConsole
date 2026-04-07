@@ -288,6 +288,21 @@ const gatewayRoutes: FastifyPluginAsync = async (fastify) => {
         holdExpiresAt: b.holdExpiresAt?.toISOString() ?? null,
         serviceDate: b.serviceDate ?? b.departureDate,
         createdAt: b.createdAt.toISOString(),
+        origin: {
+          stopId: b.originStopId ?? null,
+          name: b.originName ?? "",
+          city: b.originCity ?? "",
+          departAt: b.departAt ?? null,
+        },
+        destination: {
+          stopId: b.destinationStopId ?? null,
+          name: b.destinationName ?? "",
+          city: b.destinationCity ?? "",
+          arriveAt: b.arriveAt ?? null,
+        },
+        patternName: b.patternName ?? null,
+        farePerPerson: b.farePerPerson ?? null,
+        passengers: b.passengersJson ? JSON.parse(b.passengersJson) : [],
       }));
 
       return { data, total, page, limit, hasMore: offset + rows.length < total };

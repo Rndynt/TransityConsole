@@ -32,8 +32,15 @@ Internal admin dashboard and API gateway for the Transity ecosystem (Indonesian 
 - Booking record disimpan ke DB dengan status `pending` **sebelum** menghubungi terminal
 - Jika terminal timeout → status diubah ke `uncertain`, bookingId tetap dikembalikan ke app (HTTP 202)
 - `POST /api/gateway/bookings` menerima header `X-Idempotency-Key` — jika key sudah ada, return booking yang existing (cegah duplikat saat retry)
-- Background reconciler berjalan setiap 60 detik: cek booking `uncertain` ke terminal, update status ke `pending`/`held` jika terminal sudah memprosesnya, atau `cancelled` jika terminal tidak mengenali booking tersebut
+- Background reconciler berjalan setiap 60 detik: cek booking `uncertain` ke terminal, update status ke `pending`/`held` jika terminal sudah memprosesnya, atau `cancelled` jika terminal tidak mengenali booking tersebut; juga expire booking `held` yang lewat `holdExpiresAt` dan lepas kursi di terminal
 - Status `uncertain` bisa dibayar (`POST .../pay`) — cocok untuk kasus terminal sempat hold kursi tapi response timeout
+
+**Trip snapshot data (stored per booking)**:
+- Saat booking dibuat, Console lookup trip data dari search cache (atau getTripById fallback) lalu simpan: `originName`, `originCity`, `departAt`, `destinationName`, `destinationCity`, `arriveAt`, `patternName`, `farePerPerson`
+- `totalAmount` dihitung otomatis: `farePerPerson × jumlah penumpang`, di-override oleh terminal jika terminal mengembalikan amount > 0
+- `holdExpiresAt` default 20 menit dari waktu booking; di-override jika terminal mengembalikan `holdExpiresAt` sendiri
+- Data snapshot disertakan di `GET /api/gateway/bookings` (list) dan `GET /api/gateway/bookings/:id` (detail) sebagai `origin { stopId, name, city, departAt }`, `destination { stopId, name, city, arriveAt }`, `patternName`, `farePerPerson`, `passengers[]`
+- DB columns: `origin_name`, `origin_city`, `depart_at`, `destination_name`, `destination_city`, `arrive_at`, `pattern_name`, `fare_per_person` (semua nullable, compatible dengan booking lama)
 
 **Gateway endpoints** (TransityTerminal integration):
 - `GET /api/gateway/trips/search?originCity=&destinationCity=&date=&passengers=` — aggregated trip search (cached 90s)

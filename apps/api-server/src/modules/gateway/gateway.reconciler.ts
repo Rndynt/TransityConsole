@@ -7,6 +7,41 @@ const MAX_UNCERTAIN_AGE_MINUTES = 60;
 
 let reconcilerTimer: ReturnType<typeof setInterval> | null = null;
 
+async function expireHeldBookings(): Promise<void> {
+  let expired: Awaited<ReturnType<typeof bookingsRepo.findExpiredHeldBookings>>;
+  try {
+    expired = await bookingsRepo.findExpiredHeldBookings();
+  } catch (e) {
+    console.error("[reconciler] Failed to query expired held bookings:", e);
+    return;
+  }
+
+  if (expired.length === 0) return;
+  console.info(`[reconciler] Expiring ${expired.length} held booking(s) past holdExpiresAt`);
+
+  const { rows: operators } = await operatorsRepo.findAll({ active: true }, { limit: 100, offset: 0 });
+  const operatorMap = new Map(operators.map((o) => [o.id, o]));
+
+  for (const booking of expired) {
+    await bookingsRepo.updateStatusConditional(booking.id, "expired", ["held"]);
+    console.info(`[reconciler] Booking ${booking.id} expired (hold deadline passed)`);
+
+    const operator = operatorMap.get(booking.operatorId);
+    if (operator && booking.externalBookingId) {
+      fetch(
+        `${operator.apiUrl}/api/app/bookings/${encodeURIComponent(booking.externalBookingId)}/cancel`,
+        {
+          method: "POST",
+          signal: AbortSignal.timeout(TERMINAL_TIMEOUT_MS),
+          headers: { "X-Service-Key": operator.serviceKey, "Content-Type": "application/json" },
+        }
+      ).catch((err) => {
+        console.warn(`[reconciler] Failed to release held seats at terminal for booking ${booking.id}:`, err instanceof Error ? err.message : err);
+      });
+    }
+  }
+}
+
 async function reconcileUncertainBookings(): Promise<void> {
   let uncertain: Awaited<ReturnType<typeof bookingsRepo.findUncertainBookings>>;
   try {
@@ -79,12 +114,15 @@ async function reconcileUncertainBookings(): Promise<void> {
 
 export function startReconciler(): void {
   if (reconcilerTimer) return;
-  // Run once shortly after startup, then on interval
-  setTimeout(() => reconcileUncertainBookings().catch(console.error), 15_000);
+  setTimeout(() => {
+    reconcileUncertainBookings().catch(console.error);
+    expireHeldBookings().catch(console.error);
+  }, 15_000);
   reconcilerTimer = setInterval(() => {
     reconcileUncertainBookings().catch(console.error);
+    expireHeldBookings().catch(console.error);
   }, RECONCILE_INTERVAL_MS);
-  console.info("[reconciler] Uncertain booking reconciler started — interval: 60s");
+  console.info("[reconciler] Booking reconciler started — interval: 60s (uncertain + hold expiry)");
 }
 
 export function stopReconciler(): void {
