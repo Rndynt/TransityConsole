@@ -12,6 +12,7 @@ import gatewayRoutes from "./modules/gateway/gateway.routes.js";
 import authRoutes from "./modules/auth/auth.routes.js";
 import customerRoutes from "./modules/customers/customers.routes.js";
 import { startHealthScheduler, stopHealthScheduler } from "./modules/terminals/terminals.scheduler.js";
+import { startReconciler, stopReconciler } from "./modules/gateway/gateway.reconciler.js";
 import { ensureDefaultAdmin } from "./modules/auth/auth.service.js";
 import { runMigrations } from "@workspace/db";
 
@@ -99,10 +100,12 @@ export async function buildApp() {
   app.addHook("onReady", async () => {
     await ensureDefaultAdmin();
     startHealthScheduler();
+    startReconciler();
   });
 
   app.addHook("onClose", async () => {
     stopHealthScheduler();
+    stopReconciler();
   });
 
   return app;

@@ -220,6 +220,8 @@ const gatewayRoutes: FastifyPluginAsync = async (fastify) => {
     }
 
     const customerId = extractCustomerId(request);
+    const idempotencyKey = request.headers["x-idempotency-key"];
+    const resolvedKey = idempotencyKey && typeof idempotencyKey === "string" ? idempotencyKey : undefined;
 
     try {
       const result = await proxy.createBooking({
@@ -231,11 +233,16 @@ const gatewayRoutes: FastifyPluginAsync = async (fastify) => {
         destinationSeq: body.destinationSeq,
         passengers: body.passengers,
         customerId: customerId ?? undefined,
+        idempotencyKey: resolvedKey,
       });
 
-      aggregator.invalidateSeatmapCache(body.tripId);
+      if (result.status !== "uncertain") {
+        aggregator.invalidateSeatmapCache(body.tripId);
+      }
 
-      return reply.status(201).send(result);
+      // 202 Accepted when terminal timed out but booking record exists
+      const httpStatus = result.status === "uncertain" ? 202 : 201;
+      return reply.status(httpStatus).send(result);
     } catch (e) {
       if (e instanceof proxy.GatewayError) {
         if (e.code === "SEAT_UNAVAILABLE" || (e.message && e.message.toLowerCase().includes("seat"))) {

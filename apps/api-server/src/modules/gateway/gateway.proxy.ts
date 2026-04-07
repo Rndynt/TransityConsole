@@ -31,6 +31,7 @@ export interface BookingRequest {
   destinationSeq: number;
   passengers: PassengerInput[];
   customerId?: string;
+  idempotencyKey?: string;
 }
 
 export interface BookingResult {
@@ -46,7 +47,7 @@ export interface BookingResult {
   qrData: unknown[] | null;
   passengers: unknown[];
   tripId: string;
-  raw: Record<string, unknown>;
+  raw: Record<string, unknown> | null;
 }
 
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -81,6 +82,59 @@ export async function createBooking(req: BookingRequest): Promise<BookingResult>
   const { operatorSlug, originalTripId } = parseOperatorSlug(req.tripId);
   const operator = await findOperatorBySlug(operatorSlug);
 
+  // --- Idempotency check ---
+  if (req.idempotencyKey) {
+    const existing = await bookingsRepo.findByIdempotencyKey(req.idempotencyKey);
+    if (existing) {
+      console.info(`[gateway] Idempotency key hit: ${req.idempotencyKey} → booking ${existing.id}`);
+      return {
+        bookingId: existing.id,
+        externalBookingId: existing.externalBookingId ?? null,
+        operatorId: existing.operatorId,
+        operatorName: existing.operatorName,
+        operatorSlug,
+        status: existing.status,
+        totalAmount: String(existing.totalAmount),
+        holdExpiresAt: existing.holdExpiresAt?.toISOString() ?? null,
+        paymentIntent: null,
+        qrData: null,
+        passengers: existing.passengersJson ? JSON.parse(existing.passengersJson) : [],
+        tripId: existing.tripId,
+        raw: null,
+      };
+    }
+  }
+
+  const commissionPct = parseFloat(String(operator.commissionPct ?? "0"));
+  const seatNumbers = req.passengers.map((p) => p.seatNo);
+  const primaryPassenger = req.passengers[0];
+
+  // --- Save booking to DB BEFORE calling terminal ---
+  const booking = await bookingsRepo.create({
+    operatorId: operator.id,
+    operatorName: operator.name,
+    customerId: req.customerId ?? null,
+    passengerName: primaryPassenger?.fullName ?? "",
+    passengerPhone: primaryPassenger?.phone ?? "",
+    tripId: req.tripId,
+    origin: "",
+    destination: "",
+    departureDate: req.serviceDate,
+    seatNumbers,
+    totalAmount: "0",
+    commissionAmount: "0",
+    externalBookingId: null,
+    status: "pending",
+    providerRef: null,
+    holdExpiresAt: null,
+    paymentMethod: null,
+    passengersJson: JSON.stringify(req.passengers),
+    originStopId: req.originStopId,
+    destinationStopId: req.destinationStopId,
+    serviceDate: req.serviceDate,
+    idempotencyKey: req.idempotencyKey ?? null,
+  });
+
   const terminalPayload: Record<string, unknown> = {
     tripId: originalTripId,
     serviceDate: req.serviceDate,
@@ -96,8 +150,8 @@ export async function createBooking(req: BookingRequest): Promise<BookingResult>
     })),
   };
 
+  // --- Call terminal ---
   let terminalResponse: Record<string, unknown> | null = null;
-  let externalBookingId: string | null = null;
 
   try {
     const res = await fetch(`${operator.apiUrl}/api/app/bookings`, {
@@ -113,64 +167,62 @@ export async function createBooking(req: BookingRequest): Promise<BookingResult>
     if (!res.ok) {
       const errBody = await res.json().catch(() => ({}));
       const errMsg = (errBody as Record<string, unknown>)["message"] ?? (errBody as Record<string, unknown>)["error"] ?? `HTTP ${res.status}`;
+      // Terminal returned a definitive error — cancel the booking record
+      await bookingsRepo.updateStatus(booking.id, "cancelled");
       throw new GatewayError(String(errMsg), "TERMINAL_ERROR", res.status);
     }
 
     terminalResponse = (await res.json()) as Record<string, unknown>;
-    const rawExtId = terminalResponse["id"] ?? terminalResponse["bookingId"];
-    externalBookingId = rawExtId ? String(rawExtId) : null;
   } catch (e) {
     if (e instanceof GatewayError) throw e;
-    throw new GatewayError(
-      `Failed to reach operator terminal: ${e instanceof Error ? e.message : String(e)}`,
-      "TERMINAL_UNAVAILABLE",
-      503
-    );
+
+    // Terminal timed out or unreachable — mark booking as uncertain and return it
+    // so TransityApp can show it in "Pesanan Saya" and let user retry payment later
+    await bookingsRepo.updateStatus(booking.id, "uncertain");
+    console.warn(`[gateway] Terminal timeout for booking ${booking.id} — marked as uncertain`);
+
+    return {
+      bookingId: booking.id,
+      externalBookingId: null,
+      operatorId: operator.id,
+      operatorName: operator.name,
+      operatorSlug: operator.slug,
+      status: "uncertain",
+      totalAmount: "0",
+      holdExpiresAt: null,
+      paymentIntent: null,
+      qrData: null,
+      passengers: req.passengers,
+      tripId: req.tripId,
+      raw: null,
+    };
   }
 
+  // --- Terminal success: update booking record with terminal data ---
+  const externalBookingId = terminalResponse["id"] ?? terminalResponse["bookingId"];
   const totalAmount = String(terminalResponse["totalAmount"] ?? "0");
   const holdExpiresAt = terminalResponse["holdExpiresAt"] ? String(terminalResponse["holdExpiresAt"]) : null;
   const paymentIntent = (terminalResponse["paymentIntent"] as Record<string, unknown>) ?? null;
   const providerRef = paymentIntent ? String(paymentIntent["providerRef"] ?? "") : null;
   const qrData = (terminalResponse["qrData"] as unknown[]) ?? null;
   const respPassengers = (terminalResponse["passengers"] as unknown[]) ?? [];
+  const bookingStatus = String(terminalResponse["status"] ?? "pending");
 
-  const commissionPct = parseFloat(String(operator.commissionPct ?? "0"));
   const totalAmountNum = parseFloat(totalAmount) || 0;
   const commissionAmount = String(Math.round(totalAmountNum * commissionPct / 100));
 
-  const seatNumbers = req.passengers.map((p) => p.seatNo);
-  const primaryPassenger = req.passengers[0];
-
-  const bookingStatus = String(terminalResponse["status"] ?? "pending");
-
-  const booking = await bookingsRepo.create({
-    operatorId: operator.id,
-    operatorName: operator.name,
-    customerId: req.customerId ?? null,
-    passengerName: primaryPassenger?.fullName ?? "",
-    passengerPhone: primaryPassenger?.phone ?? "",
-    tripId: req.tripId,
-    origin: "",
-    destination: "",
-    departureDate: req.serviceDate,
-    seatNumbers,
+  await bookingsRepo.updateFromTerminalSuccess(booking.id, {
+    externalBookingId: externalBookingId ? String(externalBookingId) : null,
     totalAmount,
     commissionAmount,
-    externalBookingId,
+    holdExpiresAt: holdExpiresAt ? new Date(holdExpiresAt) : null,
     status: bookingStatus,
     providerRef: providerRef || null,
-    holdExpiresAt: holdExpiresAt ? new Date(holdExpiresAt) : null,
-    paymentMethod: null,
-    passengersJson: JSON.stringify(req.passengers),
-    originStopId: req.originStopId,
-    destinationStopId: req.destinationStopId,
-    serviceDate: req.serviceDate,
   });
 
   return {
     bookingId: booking.id,
-    externalBookingId,
+    externalBookingId: externalBookingId ? String(externalBookingId) : null,
     operatorId: operator.id,
     operatorName: operator.name,
     operatorSlug: operator.slug,
@@ -219,7 +271,7 @@ export async function payBooking(
     throw new GatewayError("Booking tidak ditemukan.", "NOT_FOUND", 404);
   }
 
-  if (booking.status !== "held" && booking.status !== "pending") {
+  if (booking.status !== "held" && booking.status !== "pending" && booking.status !== "uncertain") {
     throw new GatewayError(
       `Booking tidak bisa dibayar. Status saat ini: ${booking.status}`,
       "INVALID_STATUS",
@@ -253,7 +305,7 @@ export async function payBooking(
     discountAmount: discountAmountNum > 0 ? String(discountAmountNum) : null,
     finalAmount: String(finalAmountNum),
     voucherCode: req.voucherCode ?? null,
-  }, ["held", "pending"]);
+  }, ["held", "pending", "uncertain"]);
 
   if (!updated) {
     throw new GatewayError("Booking sudah diproses oleh request lain.", "ALREADY_PROCESSED", 409);
@@ -326,7 +378,7 @@ export async function cancelBooking(bookingId: string, customerId?: string): Pro
     throw new GatewayError("Booking tidak ditemukan.", "NOT_FOUND", 404);
   }
 
-  if (booking.status !== "held" && booking.status !== "pending" && booking.status !== "confirmed") {
+  if (booking.status !== "held" && booking.status !== "pending" && booking.status !== "confirmed" && booking.status !== "uncertain") {
     throw new GatewayError(
       `Booking tidak bisa dibatalkan. Status saat ini: ${booking.status}`,
       "INVALID_STATUS",
@@ -336,36 +388,39 @@ export async function cancelBooking(bookingId: string, customerId?: string): Pro
 
   const operator = await findOperatorById(booking.operatorId);
 
-  try {
-    const res = await fetch(
-      `${operator.apiUrl}/api/app/bookings/${encodeURIComponent(booking.externalBookingId ?? bookingId)}/cancel`,
-      {
-        method: "POST",
-        signal: AbortSignal.timeout(TERMINAL_TIMEOUT_MS),
-        headers: {
-          "X-Service-Key": operator.serviceKey,
-          "Content-Type": "application/json",
-        },
-      }
-    );
+  // Only contact terminal if we have an external booking ID (terminal knows about it)
+  if (booking.externalBookingId) {
+    try {
+      const res = await fetch(
+        `${operator.apiUrl}/api/app/bookings/${encodeURIComponent(booking.externalBookingId)}/cancel`,
+        {
+          method: "POST",
+          signal: AbortSignal.timeout(TERMINAL_TIMEOUT_MS),
+          headers: {
+            "X-Service-Key": operator.serviceKey,
+            "Content-Type": "application/json",
+          },
+        }
+      );
 
-    if (!res.ok) {
-      const errBody = await res.json().catch(() => ({}));
-      const errMsg = (errBody as Record<string, unknown>)["message"] ?? (errBody as Record<string, unknown>)["error"] ?? `HTTP ${res.status}`;
-      if (res.status !== 404) {
-        throw new GatewayError(String(errMsg), "TERMINAL_ERROR", res.status);
+      if (!res.ok) {
+        const errBody = await res.json().catch(() => ({}));
+        const errMsg = (errBody as Record<string, unknown>)["message"] ?? (errBody as Record<string, unknown>)["error"] ?? `HTTP ${res.status}`;
+        if (res.status !== 404) {
+          throw new GatewayError(String(errMsg), "TERMINAL_ERROR", res.status);
+        }
       }
+    } catch (e) {
+      if (e instanceof GatewayError) throw e;
+      throw new GatewayError(
+        `Gagal menghubungi terminal operator: ${e instanceof Error ? e.message : String(e)}`,
+        "TERMINAL_UNAVAILABLE",
+        503
+      );
     }
-  } catch (e) {
-    if (e instanceof GatewayError) throw e;
-    throw new GatewayError(
-      `Gagal menghubungi terminal operator: ${e instanceof Error ? e.message : String(e)}`,
-      "TERMINAL_UNAVAILABLE",
-      503
-    );
   }
 
-  const updated = await bookingsRepo.updateStatusConditional(booking.id, "cancelled", ["held", "pending", "confirmed"]);
+  const updated = await bookingsRepo.updateStatusConditional(booking.id, "cancelled", ["held", "pending", "confirmed", "uncertain"]);
   if (!updated) {
     throw new GatewayError("Booking sudah diproses oleh request lain.", "ALREADY_PROCESSED", 409);
   }

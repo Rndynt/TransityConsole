@@ -28,6 +28,13 @@ Internal admin dashboard and API gateway for the Transity ecosystem (Indonesian 
 
 **Backend routes**: `/api/operators` (CRUD + ping), `/api/terminals/health`, `/api/bookings`, `/api/analytics/*`, `/api/auth/*`, `/api/gateway/*`
 
+**Booking resilience (terminal timeout handling)**:
+- Booking record disimpan ke DB dengan status `pending` **sebelum** menghubungi terminal
+- Jika terminal timeout → status diubah ke `uncertain`, bookingId tetap dikembalikan ke app (HTTP 202)
+- `POST /api/gateway/bookings` menerima header `X-Idempotency-Key` — jika key sudah ada, return booking yang existing (cegah duplikat saat retry)
+- Background reconciler berjalan setiap 60 detik: cek booking `uncertain` ke terminal, update status ke `pending`/`held` jika terminal sudah memprosesnya, atau `cancelled` jika terminal tidak mengenali booking tersebut
+- Status `uncertain` bisa dibayar (`POST .../pay`) — cocok untuk kasus terminal sempat hold kursi tapi response timeout
+
 **Gateway endpoints** (TransityTerminal integration):
 - `GET /api/gateway/trips/search?originCity=&destinationCity=&date=&passengers=` — aggregated trip search (cached 90s)
 - `POST /api/gateway/trips/materialize` — materialize virtual trip; accepts `{ tripId, serviceDate }` or `{ baseId, operatorSlug, serviceDate }`, forwards to terminal's `POST /api/app/trips/materialize`

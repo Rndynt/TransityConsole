@@ -28,6 +28,7 @@ export const bookingsTable = pgTable("bookings", {
   originStopId: text("origin_stop_id"),
   destinationStopId: text("destination_stop_id"),
   serviceDate: date("service_date"),
+  idempotencyKey: text("idempotency_key"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 

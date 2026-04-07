@@ -1,4 +1,4 @@
-import { eq, desc, and, gte, lte, sql } from "drizzle-orm";
+import { eq, desc, and, gte, lte, sql, inArray } from "drizzle-orm";
 import { db, bookingsTable } from "@workspace/db";
 
 export type Booking = typeof bookingsTable.$inferSelect;
@@ -45,6 +45,11 @@ export async function findByProviderRef(providerRef: string): Promise<Booking | 
   return row ?? null;
 }
 
+export async function findByIdempotencyKey(key: string): Promise<Booking | null> {
+  const [row] = await db.select().from(bookingsTable).where(eq(bookingsTable.idempotencyKey, key));
+  return row ?? null;
+}
+
 export async function findByCustomerId(
   customerId: string,
   filters: { status?: string },
@@ -62,6 +67,16 @@ export async function findByCustomerId(
   ]);
 
   return { rows, total: Number(countRows[0]?.count ?? 0) };
+}
+
+export async function findUncertainBookings(olderThanMinutes = 60): Promise<Booking[]> {
+  const cutoff = new Date(Date.now() - olderThanMinutes * 60 * 1000);
+  return db.select().from(bookingsTable).where(
+    and(
+      eq(bookingsTable.status, "uncertain"),
+      gte(bookingsTable.createdAt, cutoff),
+    )
+  );
 }
 
 export async function create(data: {
@@ -86,9 +101,24 @@ export async function create(data: {
   originStopId?: string | null;
   destinationStopId?: string | null;
   serviceDate?: string | null;
+  idempotencyKey?: string | null;
 }): Promise<Booking> {
   const [row] = await db.insert(bookingsTable).values(data).returning();
   return row;
+}
+
+export async function updateFromTerminalSuccess(id: string, data: {
+  externalBookingId: string | null;
+  totalAmount: string;
+  commissionAmount: string;
+  holdExpiresAt: Date | null;
+  status: string;
+  providerRef?: string | null;
+}): Promise<Booking | null> {
+  const [row] = await db.update(bookingsTable).set(data).where(
+    and(eq(bookingsTable.id, id), inArray(bookingsTable.status, ["pending", "uncertain"]))
+  ).returning();
+  return row ?? null;
 }
 
 export async function updateStatus(id: string, status: string): Promise<Booking | null> {
