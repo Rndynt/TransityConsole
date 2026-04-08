@@ -462,20 +462,7 @@ export async function searchTrips(params: TripSearchParams): Promise<SearchResul
     }
   });
 
-  const deduplicated = deduplicateTrips(rawTrips);
-
-  const trips = deduplicated.filter((trip) => {
-    if (!trip.isVirtual) return true;
-    const oCity = trip.origin.cityName.trim().toLowerCase();
-    const dCity = trip.destination.cityName.trim().toLowerCase();
-    if (oCity && dCity && oCity === dCity) {
-      console.info(
-        `[gateway] Filtered out intra-city virtual trip ${trip.tripId}: ${trip.origin.stopName} → ${trip.destination.stopName} (both in ${trip.origin.cityName})`
-      );
-      return false;
-    }
-    return true;
-  });
+  const trips = deduplicateTrips(rawTrips);
 
   for (const trip of trips) {
     cache.tripContext.set(trip.tripId, {
