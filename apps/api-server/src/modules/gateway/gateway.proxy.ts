@@ -128,7 +128,7 @@ export async function createBooking(req: BookingRequest): Promise<BookingResult>
     ? String(Math.round(snapshot.farePerPerson * req.passengers.length * commissionPct / 100))
     : "0";
 
-  const holdExpiresAtDate = new Date(Date.now() + 20 * 60 * 1000);
+  const fallbackHoldExpiresAt = new Date(Date.now() + 20 * 60 * 1000);
 
   // --- Save booking to DB BEFORE calling terminal ---
   const booking = await bookingsRepo.create({
@@ -147,7 +147,7 @@ export async function createBooking(req: BookingRequest): Promise<BookingResult>
     externalBookingId: null,
     status: "pending",
     providerRef: null,
-    holdExpiresAt: holdExpiresAtDate,
+    holdExpiresAt: fallbackHoldExpiresAt,
     paymentMethod: null,
     passengersJson: JSON.stringify(req.passengers),
     originStopId: req.originStopId,
@@ -171,6 +171,7 @@ export async function createBooking(req: BookingRequest): Promise<BookingResult>
     destinationStopId: req.destinationStopId,
     originSeq: req.originSeq,
     destinationSeq: req.destinationSeq,
+    channel: "OTA",
     passengers: req.passengers.map((p) => ({
       fullName: p.fullName,
       phone: p.phone ?? "",
@@ -216,7 +217,7 @@ export async function createBooking(req: BookingRequest): Promise<BookingResult>
       operatorSlug: operator.slug,
       status: "uncertain",
       totalAmount: calculatedTotal,
-      holdExpiresAt: holdExpiresAtDate.toISOString(),
+      holdExpiresAt: fallbackHoldExpiresAt.toISOString(),
       paymentIntent: null,
       qrData: null,
       passengers: req.passengers,
@@ -234,13 +235,15 @@ export async function createBooking(req: BookingRequest): Promise<BookingResult>
   if (parseFloat(totalAmount) <= 0) {
     console.warn(`[gateway] Booking ${booking.id}: totalAmount is zero — snapshot and terminal both failed to provide pricing`);
   }
+  // Selalu gunakan holdExpiresAt dari Terminal jika ada (Terminal yang tahu TTL per channel)
   const terminalHoldExpires = terminalResponse["holdExpiresAt"] ? String(terminalResponse["holdExpiresAt"]) : null;
-  const holdExpiresAt = terminalHoldExpires ?? holdExpiresAtDate.toISOString();
+  const holdExpiresAt = terminalHoldExpires ?? fallbackHoldExpiresAt.toISOString();
   const paymentIntent = (terminalResponse["paymentIntent"] as Record<string, unknown>) ?? null;
   const providerRef = paymentIntent ? String(paymentIntent["providerRef"] ?? "") : null;
   const qrData = (terminalResponse["qrData"] as unknown[]) ?? null;
   const respPassengers = (terminalResponse["passengers"] as unknown[]) ?? req.passengers;
-  const bookingStatus = String(terminalResponse["status"] ?? "held");
+  // Status selalu "pending" — Console yang menentukan status, bukan Terminal
+  const bookingStatus = "pending";
 
   const totalAmountNum = parseFloat(totalAmount) || 0;
   const commissionAmount = String(Math.round(totalAmountNum * commissionPct / 100));
@@ -305,7 +308,7 @@ export async function payBooking(
     throw new GatewayError("Booking tidak ditemukan.", "NOT_FOUND", 404);
   }
 
-  if (booking.status !== "held" && booking.status !== "pending" && booking.status !== "uncertain") {
+  if (booking.status !== "pending" && booking.status !== "uncertain") {
     throw new GatewayError(
       `Booking tidak bisa dibayar. Status saat ini: ${booking.status}`,
       "INVALID_STATUS",
@@ -339,14 +342,15 @@ export async function payBooking(
     discountAmount: discountAmountNum > 0 ? String(discountAmountNum) : null,
     finalAmount: String(finalAmountNum),
     voucherCode: req.voucherCode ?? null,
-  }, ["held", "pending", "uncertain"]);
+  }, ["pending", "uncertain"]);
 
   if (!updated) {
     throw new GatewayError("Booking sudah diproses oleh request lain.", "ALREADY_PROCESSED", 409);
   }
 
   const operator = await findOperatorById(booking.operatorId);
-  notifyTerminalPaid(operator, booking.externalBookingId ?? bookingId, providerRef);
+  // Fire konfirmasi ke Terminal (dengan retry) — tidak memblok response ke App
+  confirmOtaPaidAtTerminal(operator, booking.externalBookingId ?? bookingId, providerRef, req.paymentMethod);
 
   const paymentMethod = CONSOLE_PAYMENT_METHODS.find(m => m.id === req.paymentMethod);
 
@@ -369,32 +373,51 @@ export async function payBooking(
   };
 }
 
-function notifyTerminalPaid(
-  operator: { apiUrl: string; serviceKey: string; webhookSecret: string | null },
+async function confirmOtaPaidAtTerminal(
+  operator: { id: string; apiUrl: string; serviceKey: string; webhookSecret: string | null },
   externalBookingId: string,
-  providerRef: string
-): void {
-  const payload = JSON.stringify({
-    bookingId: externalBookingId,
-    providerRef,
-    status: "success",
-  });
-  const signature = operator.webhookSecret
-    ? crypto.createHmac("sha256", operator.webhookSecret).update(payload).digest("hex")
-    : "";
+  providerRef: string,
+  paymentMethod: string
+): Promise<void> {
+  const MAX_RETRIES = 3;
+  const RETRY_DELAYS_MS = [1000, 3000, 7000];
 
-  fetch(`${operator.apiUrl}/api/app/payments/webhook`, {
-    method: "POST",
-    signal: AbortSignal.timeout(TERMINAL_TIMEOUT_MS),
-    headers: {
-      "Content-Type": "application/json",
-      "X-Service-Key": operator.serviceKey,
-      ...(signature ? { "X-Webhook-Signature": signature } : {}),
-    },
-    body: payload,
-  }).catch((err) => {
-    console.error(`[gateway] Failed to notify terminal of payment for booking ${externalBookingId}:`, err);
-  });
+  for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+    try {
+      const res = await fetch(
+        `${operator.apiUrl}/api/app/bookings/${encodeURIComponent(externalBookingId)}/confirm-paid`,
+        {
+          method: "POST",
+          signal: AbortSignal.timeout(TERMINAL_TIMEOUT_MS),
+          headers: {
+            "X-Service-Key": operator.serviceKey,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ providerRef, paymentMethod }),
+        }
+      );
+
+      // 200 = sukses, 400 = sudah diproses sebelumnya (idempotent — anggap sukses)
+      if (res.ok || res.status === 400) {
+        await bookingsRepo.markTerminalNotified(operator.id, externalBookingId);
+        return;
+      }
+
+      throw new Error(`HTTP ${res.status}`);
+    } catch (err) {
+      const isLast = attempt >= MAX_RETRIES - 1;
+      if (!isLast) {
+        await new Promise(r => setTimeout(r, RETRY_DELAYS_MS[attempt]));
+        continue;
+      }
+      // Semua retry gagal — catat untuk reconciliation manual
+      console.error(
+        `[gateway] confirmOtaPaid failed after ${MAX_RETRIES} retries for externalBookingId=${externalBookingId}:`,
+        err instanceof Error ? err.message : err
+      );
+      await bookingsRepo.markTerminalNotifyFailed(operator.id, externalBookingId);
+    }
+  }
 }
 
 export interface CancelBookingResult {
@@ -412,7 +435,7 @@ export async function cancelBooking(bookingId: string, customerId?: string): Pro
     throw new GatewayError("Booking tidak ditemukan.", "NOT_FOUND", 404);
   }
 
-  if (booking.status !== "held" && booking.status !== "pending" && booking.status !== "confirmed" && booking.status !== "uncertain") {
+  if (booking.status !== "pending" && booking.status !== "confirmed" && booking.status !== "uncertain") {
     throw new GatewayError(
       `Booking tidak bisa dibatalkan. Status saat ini: ${booking.status}`,
       "INVALID_STATUS",
@@ -454,7 +477,7 @@ export async function cancelBooking(bookingId: string, customerId?: string): Pro
     }
   }
 
-  const updated = await bookingsRepo.updateStatusConditional(booking.id, "cancelled", ["held", "pending", "confirmed", "uncertain"]);
+  const updated = await bookingsRepo.updateStatusConditional(booking.id, "cancelled", ["pending", "confirmed", "uncertain"]);
   if (!updated) {
     throw new GatewayError("Booking sudah diproses oleh request lain.", "ALREADY_PROCESSED", 409);
   }
@@ -518,15 +541,15 @@ function formatBookingDetail(booking: bookingsRepo.Booking) {
 }
 
 export const CONSOLE_PAYMENT_METHODS = [
-  { id: "QRIS", name: "QRIS", type: "qr", description: "Pembayaran via QRIS" },
-  { id: "GOPAY", name: "GoPay", type: "ewallet", description: "Pembayaran via GoPay" },
-  { id: "OVO", name: "OVO", type: "ewallet", description: "Pembayaran via OVO" },
-  { id: "DANA", name: "DANA", type: "ewallet", description: "Pembayaran via DANA" },
-  { id: "SHOPEEPAY", name: "ShopeePay", type: "ewallet", description: "Pembayaran via ShopeePay" },
-  { id: "VA_BCA", name: "VA BCA", type: "va", description: "Virtual Account BCA" },
-  { id: "VA_MANDIRI", name: "VA Mandiri", type: "va", description: "Virtual Account Mandiri" },
-  { id: "VA_BNI", name: "VA BNI", type: "va", description: "Virtual Account BNI" },
-  { id: "BANK_TRANSFER", name: "Bank Transfer", type: "transfer", description: "Transfer bank manual" },
+  { id: "qris",             name: "QRIS",                   type: "qr",       description: "Scan QR dari e-wallet atau m-banking" },
+  { id: "ewallet_gopay",    name: "GoPay",                  type: "ewallet",  description: "Bayar via GoPay" },
+  { id: "ewallet_ovo",      name: "OVO",                    type: "ewallet",  description: "Bayar via OVO" },
+  { id: "ewallet_dana",     name: "DANA",                   type: "ewallet",  description: "Bayar via DANA" },
+  { id: "ewallet_shopeepay",name: "ShopeePay",              type: "ewallet",  description: "Bayar via ShopeePay" },
+  { id: "va_bca",           name: "Virtual Account BCA",    type: "va",       description: "Pembayaran via VA BCA" },
+  { id: "va_mandiri",       name: "Virtual Account Mandiri",type: "va",       description: "Pembayaran via VA Mandiri" },
+  { id: "va_bni",           name: "Virtual Account BNI",    type: "va",       description: "Pembayaran via VA BNI" },
+  { id: "bank_transfer",    name: "Transfer Bank",          type: "transfer", description: "Transfer bank manual" },
 ];
 
 export function getPaymentMethods(): Array<Record<string, unknown>> {

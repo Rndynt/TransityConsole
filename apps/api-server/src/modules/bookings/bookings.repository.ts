@@ -1,4 +1,4 @@
-import { eq, desc, and, gte, lte, sql, inArray } from "drizzle-orm";
+import { eq, desc, and, lte, sql, inArray, isNotNull } from "drizzle-orm";
 import { db, bookingsTable } from "@workspace/db";
 
 export type Booking = typeof bookingsTable.$inferSelect;
@@ -17,9 +17,9 @@ export async function findAll(
   const { limit, offset } = pagination;
   const conditions = [];
   if (filters.operatorId) conditions.push(eq(bookingsTable.operatorId, filters.operatorId));
-  if (filters.status) conditions.push(eq(bookingsTable.status, filters.status as "confirmed" | "cancelled" | "pending"));
-  if (filters.startDate) conditions.push(gte(bookingsTable.departureDate, filters.startDate));
-  if (filters.endDate) conditions.push(lte(bookingsTable.departureDate, filters.endDate));
+  if (filters.status)     conditions.push(eq(bookingsTable.status, filters.status));
+  if (filters.startDate)  conditions.push(sql`${bookingsTable.departureDate} >= ${filters.startDate}`);
+  if (filters.endDate)    conditions.push(sql`${bookingsTable.departureDate} <= ${filters.endDate}`);
 
   const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
 
@@ -69,14 +69,37 @@ export async function findByCustomerId(
   return { rows, total: Number(countRows[0]?.count ?? 0) };
 }
 
+// Booking pending yang hold-nya sudah expired → reconciler set ke 'expired'
+export async function findExpiredPendingBookings(): Promise<Booking[]> {
+  return db.select().from(bookingsTable).where(
+    and(
+      eq(bookingsTable.status, "pending"),
+      isNotNull(bookingsTable.holdExpiresAt),
+      lte(bookingsTable.holdExpiresAt, new Date())
+    )
+  ).limit(100);
+}
+
+// Booking uncertain yang sudah lebih dari X menit lalu → reconciler cek ke terminal
 export async function findUncertainBookings(olderThanMinutes = 60): Promise<Booking[]> {
   const cutoff = new Date(Date.now() - olderThanMinutes * 60 * 1000);
   return db.select().from(bookingsTable).where(
     and(
       eq(bookingsTable.status, "uncertain"),
-      gte(bookingsTable.createdAt, cutoff),
+      lte(bookingsTable.createdAt, cutoff),  // ← lte: cari yang sudah LAMA (sebelum cutoff)
     )
-  );
+  ).limit(50);
+}
+
+// Booking confirmed yang gagal notifikasi terminal → reconciler retry
+export async function findUnnotifiedConfirmedBookings(): Promise<Booking[]> {
+  return db.select().from(bookingsTable).where(
+    and(
+      eq(bookingsTable.status, "confirmed"),
+      eq(bookingsTable.terminalNotified, false),
+      isNotNull(bookingsTable.externalBookingId),
+    )
+  ).limit(50);
 }
 
 export async function create(data: {
@@ -113,15 +136,6 @@ export async function create(data: {
 }): Promise<Booking> {
   const [row] = await db.insert(bookingsTable).values(data).returning();
   return row;
-}
-
-export async function findExpiredHeldBookings(): Promise<Booking[]> {
-  return db.select().from(bookingsTable).where(
-    and(
-      eq(bookingsTable.status, "held"),
-      lte(bookingsTable.holdExpiresAt, new Date())
-    )
-  );
 }
 
 export async function updateFromTerminalSuccess(id: string, data: {
@@ -171,4 +185,29 @@ export async function updatePayment(id: string, data: {
   }
   const [row] = await db.update(bookingsTable).set(data).where(and(...conditions)).returning();
   return row ?? null;
+}
+
+// Catat bahwa notifikasi terminal berhasil dikirim
+export async function markTerminalNotified(operatorId: string, externalBookingId: string): Promise<void> {
+  await db.update(bookingsTable)
+    .set({ terminalNotified: true, terminalNotifyFailedAt: null })
+    .where(
+      and(
+        eq(bookingsTable.operatorId, operatorId),
+        eq(bookingsTable.externalBookingId, externalBookingId),
+      )
+    );
+}
+
+// Catat bahwa notifikasi terminal gagal setelah semua retry
+export async function markTerminalNotifyFailed(operatorId: string, externalBookingId: string): Promise<void> {
+  await db.update(bookingsTable)
+    .set({ terminalNotifyFailedAt: new Date() })
+    .where(
+      and(
+        eq(bookingsTable.operatorId, operatorId),
+        eq(bookingsTable.externalBookingId, externalBookingId),
+        eq(bookingsTable.terminalNotified, false),
+      )
+    );
 }
